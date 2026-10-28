@@ -146,10 +146,40 @@ function readLocalBackup<T>(key: string, fallback: T): T {
   }
 }
 
+function parseHashToTab(rawHash: string): TabId {
+  const cleaned = rawHash.replace(/^#\/?/, '').trim().toLowerCase();
+  if (cleaned === 'vault' || cleaned === 'boveda') return 'vault';
+  if (cleaned === 'skills' || cleaned === 'habilidades') return 'skills';
+  if (cleaned === 'wishlist') return 'wishlist';
+  if (cleaned === 'calendar' || cleaned === 'calendario') return 'calendar';
+  return 'dashboard';
+}
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabId>(() =>
+    typeof window !== 'undefined'
+      ? parseHashToTab(window.location.hash)
+      : 'dashboard'
+  );
   const [globalSearch, setGlobalSearch] = useState('');
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+
+  // Hash-based routing synchronization for static hosting (GitHub Pages)
+  useEffect(() => {
+    const targetHash = `#/${activeTab}`;
+    if (window.location.hash !== targetHash) {
+      window.history.replaceState(null, '', targetHash);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const nextTab = parseHashToTab(window.location.hash);
+      setActiveTab((prev) => (prev === nextTab ? prev : nextTab));
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   // Firebase Auth & Google Workspace OAuth 2.0 state
   const [authUser, setAuthUser] = useState<User | null>(null);
