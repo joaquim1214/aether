@@ -257,4 +257,154 @@
   animation: aether-tab-fade 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* ============================================================================
+   ANIMACIÓN DE ONDAS DE VOZ Y ORBE ORGÁNICO (AETHER ASSISTANT · GEMINI LIVE STYLE)
+============================================================================ */
+@keyframes aether-orb-breathe {
+  0%, 100% {
+    transform: scale(1) rotate(0deg);
+    border-radius: 50% 48% 52% 50% / 48% 52% 48% 52%;
+  }
+  50% {
+    transform: scale(1.06) rotate(90deg);
+    border-radius: 48% 52% 47% 53% / 52% 48% 53% 47%;
+  }
+}
+
+@keyframes aether-orb-morph-active {
+  0% {
+    transform: scale(0.96) rotate(0deg);
+    border-radius: 44% 56% 48% 52% / 52% 44% 56% 48%;
+  }
+  33% {
+    transform: scale(1.12) rotate(120deg);
+    border-radius: 54% 46% 42% 58% / 46% 56% 44% 54%;
+  }
+  66% {
+    transform: scale(1.04) rotate(240deg);
+    border-radius: 46% 54% 56% 44% / 54% 46% 52% 48%;
+  }
+  100% {
+    transform: scale(0.96) rotate(360deg);
+    border-radius: 44% 56% 48% 52% / 52% 44% 56% 48%;
+  }
+}
+
+@keyframes aether-orb-halo {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.38);
+    opacity: 0.7;
+  }
+}
+
+@keyframes aether-voice-idle {
+  0%, 100% {
+    transform: scaleY(0.28);
+    opacity: 0.65;
+  }
+  50% {
+    transform: scaleY(0.52);
+    opacity: 0.95;
+  }
+}
+
+@keyframes aether-voice-listening {
+  0%, 100% {
+    transform: scaleY(0.25);
+  }
+  25% {
+    transform: scaleY(0.95);
+  }
+  50% {
+    transform: scaleY(0.45);
+  }
+  75% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes aether-voice-thinking {
+  0%, 100% {
+    transform: scaleY(0.32) translateY(0px);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scaleY(0.88) translateY(-2px);
+    opacity: 1;
+  }
+}
+
+@keyframes aether-voice-speaking {
+  0%, 100% {
+    transform: scaleY(0.3);
+  }
+  20% {
+    transform: scaleY(1);
+  }
+  45% {
+    transform: scaleY(0.5);
+  }
+  70% {
+    transform: scaleY(0.92);
+  }
+  85% {
+    transform: scaleY(0.4);
+  }
+}
+
+@keyframes aether-wave-ribbon {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.aether-orb-idle {
+  animation: aether-orb-breathe 5s ease-in-out infinite;
+}
+
+.aether-orb-active {
+  animation: aether-orb-morph-active 2.4s linear infinite;
+}
+
+.aether-orb-halo-ring {
+  animation: aether-orb-halo 2.2s ease-in-out infinite;
+}
+
+.aether-vbar {
+  transform-origin: center;
+  will-change: transform;
+  transition: background 0.3s ease, height 0.25s ease;
+}
+
+.aether-vbar-idle {
+  animation: aether-voice-idle 2.2s ease-in-out infinite;
+}
+
+.aether-vbar-listening {
+  animation: aether-voice-listening 0.68s ease-in-out infinite;
+}
+
+.aether-vbar-thinking {
+  animation: aether-voice-thinking 0.85s ease-in-out infinite;
+}
+
+.aether-vbar-speaking {
+  animation: aether-voice-speaking 0.62s ease-in-out infinite;
+}
+
+.aether-ribbon-scroll {
+  animation: aether-wave-ribbon 4s linear infinite;
+}
+
+.aether-ribbon-scroll-fast {
+  animation: aether-wave-ribbon 1.8s linear infinite;
+}
+
 

@@ -3,6 +3,10 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import { FunctionDeclaration, GoogleGenAI, Type } from "@google/genai";
+import {
+  buildContextualReply,
+  parseNaturalLanguageCommand,
+} from "./src/services/assistantParser";
 
 dotenv.config();
 
@@ -217,315 +221,9 @@ const createGoogleTaskDeclaration: FunctionDeclaration = {
   },
 };
 
-// Deterministic local fallback parser so the assistant always executes the 5 real functions even if quota/network fails
+// Deterministic multi-domain fallback parser so the assistant always executes the 5 real functions even if quota/network fails
 function fallbackParseIntent(prompt: string, currentContext: any) {
-  const lower = prompt.toLowerCase();
-  const actions: Array<{ name: string; args: Record<string, any> }> = [];
-  const todayDay = new Date().getDate();
-
-  // 1. Check if it's about Sports (Basketball / Football) or Learning Skills
-  const hoursMatch = prompt.match(/(\d+(?:\.\d+)?)\s*(?:horas?|hrs?|h\b|entrenamientos?|partidos?)/i);
-  const isBasketball =
-    lower.includes("básquet") ||
-    lower.includes("basquet") ||
-    lower.includes("triple") ||
-    lower.includes("balón") ||
-    lower.includes("cancha");
-  const isFootball =
-    lower.includes("fútbol") ||
-    lower.includes("futbol") ||
-    lower.includes("gol") ||
-    lower.includes("regate") ||
-    lower.includes("partido");
-
-  if (
-    isBasketball ||
-    isFootball ||
-    (hoursMatch &&
-      (lower.includes("habilidad") ||
-        lower.includes("practi") ||
-        lower.includes("entren") ||
-        lower.includes("sumé") ||
-        lower.includes("sume") ||
-        lower.includes("dediqué") ||
-        lower.includes("estudié") ||
-        lower.includes("diseño") ||
-        lower.includes("rust") ||
-        lower.includes("japonés") ||
-        lower.includes("código")))
-  ) {
-    const hours = hoursMatch ? parseFloat(hoursMatch[1]) || 1 : 1;
-    let matchedSkill = isBasketball
-      ? "Básquet · Tiro & Manejo de Balón"
-      : isFootball
-      ? "Fútbol · Control, Físico & Definición"
-      : "Arquitectura UI/UX & Sistemas";
-    let branch: "learning" | "sports" = isBasketball || isFootball ? "sports" : "learning";
-    let category = isBasketball
-      ? "Deporte · Básquet"
-      : isFootball
-      ? "Deporte · Fútbol"
-      : "Ingeniería & Diseño";
-
-    const existingSkills: any[] = currentContext?.skills || [];
-    for (const s of existingSkills) {
-      const keywords = s.name
-        .toLowerCase()
-        .split(/[\s/&·]+/)
-        .filter((w: string) => w.length > 2);
-      if (keywords.some((kw: string) => lower.includes(kw))) {
-        matchedSkill = s.name;
-        category = s.category;
-        branch = s.branch || branch;
-        break;
-      }
-    }
-
-    actions.push({
-      name: "updateOrCreateSkill",
-      args: {
-        skillName: matchedSkill,
-        branch,
-        category,
-        hoursToAdd: hours,
-        progressDelta: Math.min(25, Math.round(hours * 10)),
-        newMilestone:
-          isBasketball || isFootball
-            ? `Sesión deportiva registrada: "${prompt}"`
-            : `Sesión enfocada de ${hours}h registrada`,
-      },
-    });
-  }
-
-  // 2. Check if it's about Media / Vault (6 subcategories + Spotify Playlists & Songs)
-  const ratingMatch =
-    prompt.match(/(\d+(?:\.\d+)?)\s*\/\s*10/) ||
-    prompt.match(/calificaci[oó]n\s*(?:de\s*)?(\d+(?:\.\d+)?)/i) ||
-    prompt.match(/(\d+(?:\.\d+)?)\s*estrellas/i);
-
-  const isSpotifyOrMusic =
-    lower.includes("spotify") ||
-    lower.includes("playlist") ||
-    lower.includes("música") ||
-    lower.includes("musica") ||
-    lower.includes("álbum") ||
-    lower.includes("album") ||
-    lower.includes("canción") ||
-    lower.includes("cancion");
-
-  if (
-    ratingMatch ||
-    isSpotifyOrMusic ||
-    lower.includes("película") ||
-    lower.includes("pelicula") ||
-    lower.includes("serie") ||
-    lower.includes("anime") ||
-    lower.includes("próximamente") ||
-    lower.includes("proximamente") ||
-    lower.includes("estreno") ||
-    lower.includes("video") ||
-    lower.includes("persona") ||
-    lower.includes("bóveda") ||
-    lower.includes("boveda") ||
-    lower.includes("terminé de ver") ||
-    lower.includes("vi ")
-  ) {
-    const rating = ratingMatch ? Math.min(10, Math.max(1, parseFloat(ratingMatch[1]))) : 9.4;
-    const tier = rating >= 9 ? "S" : rating >= 7.8 ? "A" : "B";
-
-    let vaultGroup = "peliculas_series";
-    let category = "Cine";
-    if (lower.includes("próximamente") || lower.includes("proximamente") || lower.includes("estreno") || lower.includes("esperando")) {
-      vaultGroup = "proximamente";
-      category = "Próximamente";
-    } else if (isSpotifyOrMusic) {
-      vaultGroup = "musica";
-      category = "Música";
-    } else if (lower.includes("video") || lower.includes("youtube") || lower.includes("canal")) {
-      vaultGroup = "videos";
-      category = "Video";
-    } else if (lower.includes("persona") || lower.includes("amigo") || lower.includes("mentor")) {
-      vaultGroup = "personas";
-      category = "Persona";
-    } else if (lower.includes("momento") || lower.includes("viaje") || lower.includes("recuerdo")) {
-      vaultGroup = "momentos";
-      category = "Momento";
-    } else if (lower.includes("serie") || lower.includes("anime") || lower.includes("temporada")) {
-      vaultGroup = "peliculas_series";
-      category = "Serie";
-    }
-
-    const imdbIdMatch = prompt.match(/\b(tt\d{6,10})\b/i);
-    let title = imdbIdMatch ? imdbIdMatch[1] : "Nueva Experiencia";
-    let parsedCreator = "Registrado vía Aether Assistant";
-
-    // Specific pattern: "Guarda mi playlist [Nombre] de Spotify"
-    const playlistMatch = prompt.match(
-      /playlist\s+["'«“]?([^"'»”]+?)["'»”]?(?:\s+de\s+spotify|\s+en\s+la|\s+en\s+mi|$)/i
-    );
-    // Specific pattern: "Busca y guarda la canción [X] de [Artista]"
-    const songArtistMatch = prompt.match(
-      /(?:canci[oó]n|tema|track|álbum|album)\s+["'«“]?([^"'»”]+?)["'»”]?\s+de\s+([A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\s.&\-]{2,35})(?:\s+en\s+spotify|\s+en\s+la|\s+en\s+mi|,|\s*$)/i
-    );
-
-    const quoted = prompt.match(/["'«“]([^"'»”]+)["'»”]/);
-    if (playlistMatch && playlistMatch[1]) {
-      title = playlistMatch[1].trim();
-      parsedCreator = "Playlist · Spotify";
-    } else if (songArtistMatch && songArtistMatch[1]) {
-      title = `${songArtistMatch[1].trim()} ${songArtistMatch[2].trim()}`;
-      parsedCreator = songArtistMatch[2].trim();
-    } else if (quoted) {
-      title = quoted[1].trim();
-    } else if (!imdbIdMatch) {
-      const verbMatch = prompt.match(
-        /(?:ver|vi|película|pelicula|serie|anime|álbum|album|canción|cancion|playlist|video|estreno|agrega|guarda)\s+(?:mi\s+playlist\s+|la\s+playlist\s+|la\s+canción\s+|la\s+película\s+|la\s+serie\s+|el\s+anime\s+)?([A-ZÁÉÍÓÚÑa-záéíóúñ0-9:\-\s]{2,45}?)(?:\s+de\s+spotify|\s+en\s+spotify|\s+y\s+busca|\s+en\s+imdb|,|\.|y\s+le|le\s+doy|con\s+un|en\s+la|$)/i
-      );
-      if (verbMatch && verbMatch[1]) {
-        title = verbMatch[1].trim();
-      }
-    }
-
-    actions.push({
-      name: "addVaultItem",
-      args: {
-        title: title.charAt(0).toUpperCase() + title.slice(1),
-        vaultGroup,
-        category,
-        creator: parsedCreator,
-        rating,
-        tier,
-        tags: isSpotifyOrMusic ? ["Spotify", "Música"] : [category, "Destacado"],
-        review: prompt,
-        imdbId: imdbIdMatch ? imdbIdMatch[1].toLowerCase() : undefined,
-      },
-    });
-  }
-
-  // 3. Check if it's about Wishlist or Savings Pool
-  const priceMatch =
-    prompt.match(/\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)/) ||
-    prompt.match(/(\d+)\s*(?:usd|dólares|dolares)/i);
-  if (
-    lower.includes("wishlist") ||
-    lower.includes("comprar") ||
-    lower.includes("presupuesto") ||
-    lower.includes("fondo libre") ||
-    lower.includes("ahorro disponible")
-  ) {
-    const amount = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, "")) : 200;
-    if (lower.includes("fondo") || lower.includes("presupuesto") || lower.includes("ahorro disponible")) {
-      actions.push({
-        name: "manageWishlist",
-        args: {
-          actionType: "update_savings_pool",
-          extraSavingsPool: amount,
-        },
-      });
-    } else {
-      let name = "Nuevo Producto Wishlist";
-      const quoted = prompt.match(/["'«“]([^"'»”]+)["'»”]/);
-      if (quoted) {
-        name = quoted[1].trim();
-      } else {
-        const itemMatch = prompt.match(
-          /(?:agrega|añade|comprar|quiero)\s+(?:el\s+|la\s+|un\s+|una\s+|unas\s+)?([A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\-\s]{3,32}?)(?:\s+a\s+mi|\s+en\s+la|\s+por\s+\$|\s+de\s+\$|,|$)/i
-        );
-        if (itemMatch && itemMatch[1]) {
-          name = itemMatch[1].trim();
-        }
-      }
-
-      const isSportItem =
-        lower.includes("zapatilla") ||
-        lower.includes("balón") ||
-        lower.includes("básquet") ||
-        lower.includes("fútbol") ||
-        lower.includes("botines");
-
-      actions.push({
-        name: "manageWishlist",
-        args: {
-          actionType: "add_product",
-          name: name.charAt(0).toUpperCase() + name.slice(1),
-          estimatedPrice: amount,
-          savedAmount: 0,
-          priority: lower.includes("alta") ? "Alta" : "Media",
-          wishlistTag: isSportItem ? "Deporte / Básquet & Fútbol" : "Tech",
-        },
-      });
-    }
-  }
-
-  // 4. Check if it's about Google Tasks
-  if (
-    lower.includes("tarea") ||
-    lower.includes("google tasks") ||
-    lower.includes("pendiente") ||
-    lower.includes("to-do")
-  ) {
-    let title = prompt;
-    const quoted = prompt.match(/["'«“]([^"'»”]+)["'»”]/);
-    if (quoted) {
-      title = quoted[1].trim();
-    } else {
-      const m = prompt.match(/(?:tarea|pendiente)\s*[:\-]?\s*(.+)$/i);
-      if (m && m[1]) title = m[1].trim();
-    }
-    actions.push({
-      name: "createGoogleTask",
-      args: {
-        title: title.charAt(0).toUpperCase() + title.slice(1),
-        notes: "Creada desde Aether Assistant",
-      },
-    });
-  }
-
-  // 5. Check if it's about Google Calendar Event
-  if (
-    lower.includes("agéndame") ||
-    lower.includes("agendame") ||
-    lower.includes("agenda") ||
-    lower.includes("calendar") ||
-    lower.includes("mañana a las") ||
-    lower.includes("hoy a las") ||
-    lower.includes("evento")
-  ) {
-    let hour = 18;
-    let minute = "00";
-    const explicitTime =
-      prompt.match(/a\s+las\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i) ||
-      prompt.match(/(\d{1,2}):(\d{2})/);
-    if (explicitTime) {
-      hour = parseInt(explicitTime[1], 10);
-      minute = explicitTime[2] || "00";
-      if (explicitTime[3]?.toLowerCase() === "pm" && hour < 12) hour += 12;
-    }
-    const endHour = Math.min(23, hour + 1);
-    const timeRange = `${String(hour).padStart(2, "0")}:${minute} - ${String(endHour).padStart(2, "0")}:30`;
-    const dayOfMonth = lower.includes("mañana") ? todayDay + 1 : todayDay;
-
-    let title = "Entrenamiento / Sesión Enfocada";
-    const taskMatch = prompt.match(
-      /(?:agéndame|agendame|agendar|programar)\s+([A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\s]{3,40}?)(?:\s+mañana|\s+hoy|\s+a\s+las|\s+en\s+calendar|$)/i
-    );
-    if (taskMatch && taskMatch[1]) {
-      title = taskMatch[1].trim();
-    }
-
-    actions.push({
-      name: "scheduleCalendarEvent",
-      args: {
-        title: title.charAt(0).toUpperCase() + title.slice(1),
-        timeRange,
-        dayOfMonth,
-        description: `Agendado desde Aether Assistant: "${prompt}"`,
-        accent: dayOfMonth % 2 === 0 ? "lavender" : "mint",
-      },
-    });
-  }
-
-  return actions;
+  return parseNaturalLanguageCommand(prompt, currentContext);
 }
 
 // TMDB Multi-Search Server Proxy (falls back seamlessly to keyless TVMaze + iTunes when TMDB_API_KEY is not set)
@@ -1191,19 +889,26 @@ app.post("/api/assistant", async (req, res) => {
       year: "numeric",
     });
 
-    const systemInstruction = `Eres el Asistente de IA integrado en "Aether" (Aether Assistant), conectado en tiempo real a Firebase Firestore, Spotify API, Google Calendar API y Google Tasks API.
-Fecha actual: ${todayStr}.
-Cuando el usuario te pida registrar, actualizar o agendar algo, DEBES invocar las herramientas (Function Calling) correspondientes:
-1. Bóveda de Experiencias ('peliculas_series', 'proximamente', 'musica', 'videos', 'personas', 'momentos') -> usa addVaultItem. Si el usuario pide guardar una playlist de Spotify o una canción de un artista en Spotify, invoca addVaultItem con vaultGroup: 'musica', category: 'Música', title con el nombre exacto de la playlist o canción, y creator con el artista o 'Playlist · Spotify'.
-2. Proyecto de Vida RPG y Metas Físicas (Básquet, Fútbol, entrenamientos, habilidades, récords) -> usa updateOrCreateSkill.
+    const systemInstruction = `Eres el Asistente de IA integrado en "Aether" (Aether Assistant), conectado en tiempo real a Firebase Firestore, Spotify API, IMDb/TMDB, Google Calendar API y Google Tasks API.
+Fecha actual: ${todayStr} (Día del mes: ${new Date().getDate()}).
+Cuando el usuario te pida registrar, actualizar o agendar algo, DEBES invocar las herramientas (Function Calling) correspondientes extrayendo con total precisión los datos:
+1. Bóveda de Experiencias ('peliculas_series', 'proximamente', 'musica', 'videos', 'personas', 'momentos') -> usa addVaultItem:
+   - Ejemplo: "Guarda la película Interstellar con nota 9.5 en la Bóveda" -> title: "Interstellar", vaultGroup: "peliculas_series", category: "Cine", rating: 9.5, tier: "S".
+   - Ejemplo: "Añade el álbum Random Access Memories de Daft Punk a mi música" -> title: "Random Access Memories", creator: "Daft Punk", vaultGroup: "musica", category: "Música", rating: 9.6, tier: "S".
+2. Proyecto de Vida RPG y Metas Físicas (Básquet, Fútbol, entrenamientos, habilidades, récords) -> usa updateOrCreateSkill:
+   - Si el usuario indica minutos (ej. "45 minutos"), convierte a horas decimales (hoursToAdd: 0.75).
+   - Si menciona récords o estadísticas (ej. "3 triples anotados"), guárdalos en sportStats y newMilestone.
+   - Si menciona XP explícito (ej. "+50 XP"), asigna progressDelta: 50.
 3. Wishlist Inteligente (agregar producto o actualizar el Fondo de Ahorro Disponible) -> usa manageWishlist.
-4. Eventos o entrenamientos con hora en Google Calendar -> usa scheduleCalendarEvent.
+4. Eventos, entrenamientos o partidos en Google Calendar -> usa scheduleCalendarEvent:
+   - Calcula el dayOfMonth exacto si dice "mañana", "este viernes", "el sábado", etc., respecto a la fecha actual (${todayStr}).
+   - Convierte horas como "a las 6 pm" al formato 24h "18:00 - 19:30".
 5. Tareas pendientes o to-dos en Google Tasks -> usa createGoogleTask.
 
 Habilidades actuales en Firebase: ${JSON.stringify(
       context?.skills?.map((s: any) => ({ name: s.name, branch: s.branch })) || []
     )}.
-Responde siempre en español con un tono claro, cercano y motivador.`;
+Responde siempre en español con un tono conciso, elegante y motivador.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",
@@ -1235,8 +940,7 @@ Responde siempre en español con un tono claro, cercano y motivador.`;
 
     let replyText = response.text || "";
     if (!replyText && finalActions.length > 0) {
-      replyText =
-        "¡Listo! He ejecutado las acciones solicitadas directamente en tu base de datos y servicios conectados.";
+      replyText = buildContextualReply(finalActions as any);
     }
 
     return res.json({
@@ -1246,15 +950,12 @@ Responde siempre en español con un tono claro, cercano y motivador.`;
     });
   } catch {
     const fallbackActions = fallbackParseIntent(prompt, context);
-    const replyText =
-      fallbackActions.length > 0
-        ? "¡Hecho! He procesado tu comando y sincronizado los cambios en tiempo real."
-        : "Estoy conectado a tu Firestore, Google Calendar y Google Tasks. Dime qué película o canción quieres guardar en tu Bóveda, qué entrenamiento de Básquet/Fútbol o estudio deseas sumar, qué producto añadir a tu Wishlist o qué evento/tarea agendar.";
+    const replyText = buildContextualReply(fallbackActions);
 
     return res.json({
       reply: replyText,
       actions: fallbackActions,
-      source: "lifeos-action-engine",
+      source: "aether-nlp-engine",
     });
   }
 });

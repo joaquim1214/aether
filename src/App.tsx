@@ -1094,6 +1094,13 @@ export default function App() {
             )
           : null;
 
+      const fallbackSpotifyUrl =
+        vaultGroup === 'musica'
+          ? `https://open.spotify.com/search/${encodeURIComponent(
+              `${mediaMatch?.title || rawTitle} ${finalCreator || ''}`.trim()
+            )}`
+          : undefined;
+
       const payload: Omit<VaultItem, 'id'> = {
         title: mediaMatch?.title || rawTitle,
         creator: finalCreator,
@@ -1142,7 +1149,7 @@ export default function App() {
           vaultGroup === 'proximamente'
             ? mediaMatch?.releaseFormat || 'Cine / Streaming'
             : undefined,
-        videoUrl: mediaMatch?.videoUrl,
+        videoUrl: mediaMatch?.videoUrl || fallbackSpotifyUrl,
         hypeLevel:
           vaultGroup === 'proximamente'
             ? Math.min(100, Math.max(0, Number(args.hypeLevel) || 95))
@@ -1160,8 +1167,42 @@ export default function App() {
           payload.imdbRating ? `IMDb ${payload.imdbRating} ★ · ` : ''
         }Tu nota: ${payload.rating.toFixed(1)} ★ · Tier ${payload.tier})`,
         targetModule: 'vault',
-        sourceBadge: authUser ? 'Firestore · vault_items' : 'Bóveda Local',
+        sourceBadge:
+          vaultGroup === 'musica'
+            ? 'Spotify API + Firestore'
+            : authUser
+            ? 'Firestore · vault_items'
+            : 'Bóveda Local',
         accent: payload.accent,
+        itemType: 'vault',
+        title: payload.title,
+        subtitle: `${payload.creator}${
+          payload.releaseYear ? ` · ${payload.releaseYear}` : ''
+        }`,
+        imageUrl: payload.imageUrl,
+        badgeText:
+          vaultGroup === 'proximamente'
+            ? payload.daysRemaining !== undefined
+              ? `Faltan ${payload.daysRemaining}d`
+              : 'Próximamente'
+            : `${payload.rating.toFixed(1)} ★ · Tier ${payload.tier}`,
+        secondaryBadge: payload.imdbRating
+          ? `IMDb ${payload.imdbRating}`
+          : vaultGroup === 'musica'
+          ? 'Spotify Sync'
+          : payload.category,
+        progressPct:
+          vaultGroup === 'proximamente'
+            ? payload.hypeLevel ?? 95
+            : Math.round(payload.rating * 10),
+        progressLabel:
+          vaultGroup === 'proximamente'
+            ? `Hype ${payload.hypeLevel ?? 95}%`
+            : `Nota personal ${payload.rating.toFixed(1)}/10`,
+        spotifyUrl:
+          vaultGroup === 'musica' ? payload.videoUrl : undefined,
+        audioPreviewUrl: payload.audioPreviewUrl,
+        tags: payload.tags,
         details: `${
           payload.imdbId ? `[${payload.imdbId}] ` : ''
         }${payload.actors ? `Reparto: ${payload.actors} · ` : ''}"${payload.review}"`,
@@ -1172,7 +1213,14 @@ export default function App() {
     if (name === 'updateOrCreateSkill' || name === 'updateSkillProgress') {
       const targetName = String(args.skillName || 'Básquet · Tiro & Manejo');
       const hours = Number(args.hoursToAdd) || 1;
-      const delta = Number(args.progressDelta) || Math.min(30, hours * 10);
+      const durationLabel = args.durationLabel
+        ? String(args.durationLabel)
+        : hours < 1
+        ? `${Math.round(hours * 60)} min`
+        : `${hours} ${
+            args.branch === 'sports' ? 'entreno' : 'h'
+          }`;
+      const delta = Number(args.progressDelta) || Math.min(40, Math.round(hours * 15));
       const lowerTarget = targetName.toLowerCase();
       const isSports =
         args.branch === 'sports' ||
@@ -1195,7 +1243,7 @@ export default function App() {
       if (existing) {
         const rawProg = existing.progress + delta;
         const levelUp = rawProg >= 100;
-        const nextHours = Number((existing.hoursInvested + hours).toFixed(1));
+        const nextHours = Number((existing.hoursInvested + hours).toFixed(2));
         const nextLevel = levelUp ? existing.level + 1 : existing.level;
         const nextProg = levelUp ? rawProg - 100 : rawProg;
         const updatedMilestones = args.newMilestone
@@ -1230,7 +1278,7 @@ export default function App() {
             hours: 0,
             focusTopic: existing.name,
           }),
-          hours: Number(((todayDayObj?.hours || 0) + hours).toFixed(1)),
+          hours: Number(((todayDayObj?.hours || 0) + hours).toFixed(2)),
           focusTopic: existing.name,
         };
 
@@ -1250,15 +1298,24 @@ export default function App() {
 
         return {
           name: 'updateOrCreateSkill',
-          summary: `${existing.name} (+${hours} ${isSports ? 'entreno' : 'h'} · Lv. ${nextLevel})`,
+          summary: `${existing.name} (+${durationLabel} · +${delta} XP · Lv. ${nextLevel})`,
           targetModule: 'skills',
           sourceBadge: authUser ? 'Firestore · skills_rpg' : 'Skills Local',
           accent: existing.accent,
+          itemType: 'skill',
+          title: existing.name,
+          subtitle: `${existing.category} · Total ${nextHours} ${existing.unitLabel}`,
+          badgeText: `Lv. ${nextLevel}${levelUp ? ' ⬆️' : ''}`,
+          secondaryBadge: `+${delta} XP · +${durationLabel}`,
+          progressPct: nextProg,
+          progressLabel: `${nextProg}% XP hacia Lv. ${nextLevel + 1}`,
+          tags: existing.tags,
           details: args.newMilestone
             ? `Hito registrado: "${args.newMilestone}"`
             : `Progreso actualizado a ${nextProg}% XP`,
         };
       } else {
+        const initialProg = Math.min(95, delta);
         const newSkillPayload: Omit<SkillItem, 'id'> = {
           name: targetName,
           category: String(
@@ -1269,7 +1326,7 @@ export default function App() {
           unitLabel: isSports ? 'Entrenamientos' : 'h',
           sportStats: args.sportStats ? String(args.sportStats) : undefined,
           level: 1,
-          progress: Math.min(95, 25 + delta),
+          progress: initialProg,
           hoursInvested: hours,
           weeklyTargetHours: 5,
           accent: isSports ? 'mint' : 'lavender',
@@ -1282,7 +1339,7 @@ export default function App() {
               id: `m-ai-${Date.now()}`,
               title: String(
                 args.newMilestone ||
-                  `Primera sesión registrada (${hours} ${isSports ? 'entreno' : 'h'})`
+                  `Sesión registrada (+${durationLabel} · +${delta} XP)`
               ),
               unlocked: true,
               date: todayFormatted,
@@ -1300,7 +1357,7 @@ export default function App() {
             hours: 0,
             focusTopic: newSkillPayload.name,
           }),
-          hours: Number(((todayDayObj?.hours || 0) + hours).toFixed(1)),
+          hours: Number(((todayDayObj?.hours || 0) + hours).toFixed(2)),
           focusTopic: newSkillPayload.name,
         };
         if (authUser) {
@@ -1313,11 +1370,21 @@ export default function App() {
 
         return {
           name: 'updateOrCreateSkill',
-          summary: `Nueva tarjeta: ${newSkillPayload.name} (Lv. 1)`,
+          summary: `Nueva habilidad: ${newSkillPayload.name} (Lv. 1 · +${delta} XP)`,
           targetModule: 'skills',
           sourceBadge: authUser ? 'Firestore · skills_rpg' : 'Skills Local',
           accent: newSkillPayload.accent,
-          details: `Creada con +${hours} ${isSports ? 'entrenamiento' : 'h'} y bitácora activa.`,
+          itemType: 'skill',
+          title: newSkillPayload.name,
+          subtitle: `${newSkillPayload.category} · +${durationLabel}`,
+          badgeText: 'Lv. 1',
+          secondaryBadge: `+${delta} XP`,
+          progressPct: initialProg,
+          progressLabel: `${initialProg}% XP hacia Lv. 2`,
+          tags: newSkillPayload.tags,
+          details: args.newMilestone
+            ? `Hito registrado: "${args.newMilestone}"`
+            : `Creada con +${durationLabel} y bitácora activa.`,
         };
       }
     }
@@ -1338,6 +1405,13 @@ export default function App() {
             ? 'Firestore · wishlist_settings'
             : 'Wishlist Local',
           accent: 'mint',
+          itemType: 'wishlist',
+          title: 'Fondo de Ahorro Disponible',
+          subtitle: 'Presupuesto inteligente actualizado',
+          badgeText: `$${poolAmount} USD`,
+          secondaryBadge: 'Ahorro Activo',
+          progressPct: 100,
+          progressLabel: 'Radar de compras sincronizado',
           details:
             'El radar de compras disponibles hoy se ha recalculado automáticamente.',
         };
@@ -1376,12 +1450,23 @@ export default function App() {
       };
 
       await handleCreateWishlist(newWishPayload);
+      const savedPct = Math.min(
+        100,
+        Math.round(((saved + extraSavingsPool) / price) * 100)
+      );
       return {
         name: 'manageWishlist',
         summary: `${newWishPayload.name} ($${newWishPayload.estimatedPrice} USD)`,
         targetModule: 'wishlist',
         sourceBadge: authUser ? 'Firestore · wishlist_items' : 'Wishlist Local',
         accent: newWishPayload.accent,
+        itemType: 'wishlist',
+        title: newWishPayload.name,
+        subtitle: `${newWishPayload.wishlistTag} · Meta $${price} USD`,
+        badgeText: `$${price} USD`,
+        secondaryBadge: `Prioridad ${newWishPayload.priority}`,
+        progressPct: savedPct,
+        progressLabel: `${savedPct}% cubierto con tu ahorro`,
         details: `Prioridad ${newWishPayload.priority} · Categoría: ${newWishPayload.wishlistTag}`,
       };
     }
@@ -1414,8 +1499,17 @@ export default function App() {
         targetModule: 'calendar',
         sourceBadge: getAccessToken()
           ? 'Google Calendar API'
-          : 'Agenda Local',
+          : 'Agenda + Firestore',
         accent,
+        itemType: 'calendar',
+        title,
+        subtitle: `Día ${dayNum} del mes · ${timeRange}`,
+        badgeText: timeRange,
+        secondaryBadge: `Día ${dayNum}`,
+        progressPct: 100,
+        progressLabel: getAccessToken()
+          ? 'Sincronizado con Google Calendar'
+          : 'Agendado en Cronograma Aether',
         details: args.description
           ? String(args.description)
           : 'Evento sincronizado en tu línea de tiempo horizontal.',
@@ -1436,6 +1530,13 @@ export default function App() {
           ? 'Google Tasks API (@default)'
           : 'Tasks Local',
         accent: 'lavender',
+        itemType: 'task',
+        title,
+        subtitle: 'Google Tasks · Pendiente',
+        badgeText: 'Por hacer',
+        secondaryBadge: 'Tasks Sync',
+        progressPct: 100,
+        progressLabel: 'Lista de tareas actualizada',
         details: notes || 'Añadida a tu lista de tareas pendientes.',
       };
     }

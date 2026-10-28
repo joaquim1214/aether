@@ -187,9 +187,34 @@ export interface AssistantActionRecord {
   name: string;
   summary: string;
   targetModule: TabId;
-  sourceBadge?: 'Firestore' | 'Google Calendar' | 'Google Tasks';
+  sourceBadge?:
+    | 'Firestore · vault_items'
+    | 'Firestore · skills_rpg'
+    | 'Firestore · wishlist_items'
+    | 'Firestore · wishlist_settings'
+    | 'Google Calendar API'
+    | 'Google Tasks API (@default)'
+    | 'Bóveda Local'
+    | 'Skills Local'
+    | 'Wishlist Local'
+    | 'Agenda Local'
+    | 'Tasks Local'
+    | string;
   accent?: 'mint' | 'lavender';
   details?: string;
+  // Rich miniature Soft Bento Card preview fields
+  itemType?: 'vault' | 'skill' | 'wishlist' | 'calendar' | 'task';
+  title?: string;
+  subtitle?: string;
+  imageUrl?: string;
+  badgeText?: string;
+  secondaryBadge?: string;
+  progressPct?: number;
+  progressLabel?: string;
+  spotifyUrl?: string;
+  audioPreviewUrl?: string;
+  tags?: string[];
+  createdVaultItem?: VaultItem;
 }
 
 export interface AssistantMessage {

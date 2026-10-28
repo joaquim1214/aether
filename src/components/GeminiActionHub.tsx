@@ -1,123 +1,356 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
-  ArrowUpRight,
-  Bot,
-  CheckCircle2,
-  Database,
-  Loader2,
-  Mic,
-  MicOff,
-  Send,
-  Sparkles,
   X,
+  ArrowUp,
+  ArrowUpRight,
+  Trash2,
+  Calendar,
+  Trophy,
+  ShoppingBag,
+  Bookmark,
+  CheckSquare,
+  Play,
+  Pause,
+  ExternalLink,
+  Music,
+  Film,
+  Clock,
 } from 'lucide-react';
 import {
-  AssistantActionRecord,
-  AssistantMessage,
+  ChatMessage,
   SkillItem,
+  VaultItem,
+  WishlistItem,
+  ScheduleBlock,
+  AssistantActionRecord,
   TabId,
 } from '../types/lifeOs';
+import {
+  parseNaturalLanguageCommand,
+  buildContextualReply,
+} from '../services/assistantParser';
 
 interface GeminiActionHubProps {
   isOpen: boolean;
   onClose: () => void;
   skills: SkillItem[];
-  isCloudConnected: boolean;
-  isGoogleWorkspaceConnected: boolean;
+  vault: VaultItem[];
+  wishlist: WishlistItem[];
+  extraSavingsPool: number;
+  schedule: ScheduleBlock[];
+  isGoogleCalendarConnected: boolean;
+  isFirestoreConnected: boolean;
   onExecuteAction: (action: {
     name: string;
-    args: Record<string, any>;
+    args: any;
   }) => Promise<AssistantActionRecord | null>;
   onNavigateTab: (tab: TabId) => void;
 }
 
-const QUICK_PROMPTS = [
-  'Busca y guarda la canción "Midnight City" de M83 en Spotify',
-  'Guarda mi playlist "Deep Work" de Spotify',
-  'Hoy entrené 1 hora de Básquet, metí 8/10 triples seguidos',
-  'Terminé de ver "Dune: Part Two", le doy un 9.8/10',
-  'Agéndame partido de Fútbol mañana a las 19:00 en Google Calendar',
+export type AssistantVoiceState = 'idle' | 'listening' | 'thinking' | 'speaking';
+
+const INITIAL_MESSAGES: ChatMessage[] = [
+  {
+    id: 'msg-welcome',
+    role: 'assistant',
+    content:
+      '¿Qué quieres guardar o agendar hoy? Puedo registrar películas, música de Spotify, entrenamientos o eventos en tu calendario.',
+    timestamp: 'Ahora',
+  },
 ];
+
+const QUICK_PROMPTS = [
+  'Guarda la película Interstellar con nota 9.5 en la Bóveda',
+  'Añade el álbum Random Access Memories de Daft Punk a mi música',
+  'Regístrame 45 minutos de práctica de básquet con 3 triples anotados y +50 XP',
+  'Agéndame un partido de fútbol este viernes a las 6 pm',
+];
+
+const LIVE_WAVE_BARS = [
+  { delay: '0s', idleH: 8, activeH: 16, tone: 'lavender' },
+  { delay: '0.12s', idleH: 12, activeH: 24, tone: 'charcoal' },
+  { delay: '0.24s', idleH: 14, activeH: 28, tone: 'lavender' },
+  { delay: '0.08s', idleH: 11, activeH: 22, tone: 'charcoal' },
+  { delay: '0.18s', idleH: 8, activeH: 16, tone: 'lavender' },
+] as const;
 
 export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
   isOpen,
   onClose,
   skills,
-  isCloudConnected,
-  isGoogleWorkspaceConnected,
+  vault,
+  wishlist,
+  extraSavingsPool,
+  schedule,
   onExecuteAction,
   onNavigateTab,
 }) => {
+  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [messages, setMessages] = useState<AssistantMessage[]>([
-    {
-      id: 'welcome-msg',
-      role: 'assistant',
-      content:
-        '¡Hola Joaquim! Soy tu Aether Assistant con Function Calling en producción. Todo lo que me pidas se guarda directamente en Firebase Firestore o se agenda en tiempo real en tu Google Calendar y Google Tasks.',
-      timestamp: new Date().toLocaleTimeString('es-ES', {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    },
-  ]);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const speakingTimerRef = useRef<number | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const aiState: AssistantVoiceState = isListening
+    ? 'listening'
+    : isLoading
+    ? 'thinking'
+    : isSpeaking || Boolean(playingUrl)
+    ? 'speaking'
+    : 'idle';
+
+  const isWaveActive = aiState !== 'idle' || input.trim().length > 0;
+
+  useEffect(() => {
+    if (isOpen) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        setPlayingUrl(null);
+      }
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      setIsListening(false);
+      setIsSpeaking(false);
+    }
+  }, [messages, isOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      if (speakingTimerRef.current) {
+        window.clearTimeout(speakingTimerRef.current);
+      }
+    };
+  }, []);
 
   if (!isOpen) return null;
 
-  const handleSend = async (customPrompt?: string) => {
-    const textToSend = (customPrompt ?? input).trim();
+  const triggerAssistantSpeakingWave = (replyText: string) => {
+    if (speakingTimerRef.current) {
+      window.clearTimeout(speakingTimerRef.current);
+    }
+    setIsSpeaking(true);
+    const durationMs = Math.min(4200, Math.max(2200, replyText.length * 28));
+    speakingTimerRef.current = window.setTimeout(() => {
+      setIsSpeaking(false);
+    }, durationMs);
+  };
+
+  const toggleVoiceCapture = () => {
+    if (isListening) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          // ignore
+        }
+      }
+      setIsListening(false);
+      return;
+    }
+
+    const SpeechRecognitionAPI =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (SpeechRecognitionAPI) {
+      try {
+        const recognition = new SpeechRecognitionAPI();
+        recognition.lang = 'es-ES';
+        recognition.interimResults = true;
+        recognition.continuous = false;
+
+        recognition.onstart = () => {
+          setIsListening(true);
+        };
+
+        recognition.onresult = (event: any) => {
+          let transcript = '';
+          for (let i = 0; i < event.results.length; i++) {
+            transcript += event.results[i][0].transcript;
+          }
+          setInput(transcript);
+          if (event.results[0]?.isFinal && transcript.trim()) {
+            setIsListening(false);
+            handleSend(transcript.trim());
+          }
+        };
+
+        recognition.onerror = () => {
+          setIsListening(false);
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+        return;
+      } catch {
+        // Fallback when microphone permission is restricted in iframe
+      }
+    }
+
+    setIsListening(true);
+    speakingTimerRef.current = window.setTimeout(() => {
+      setIsListening(false);
+    }, 3200);
+  };
+
+  const toggleMiniPreview = (previewUrl?: string) => {
+    if (!previewUrl) return;
+    if (playingUrl === previewUrl && audioRef.current) {
+      audioRef.current.pause();
+      setPlayingUrl(null);
+      return;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    const audio = new Audio(previewUrl);
+    audio.volume = 0.85;
+    audio.onended = () => setPlayingUrl(null);
+    audio.onerror = () => setPlayingUrl(null);
+    audioRef.current = audio;
+    setPlayingUrl(previewUrl);
+    audio.play().catch(() => setPlayingUrl(null));
+  };
+
+  const getActionIcon = (name: string, spotifyUrl?: string) => {
+    if (spotifyUrl) return <Music className="w-4 h-4 text-[#141519]" />;
+    switch (name) {
+      case 'addVaultItem':
+        return <Film className="w-4 h-4 text-[#141519]" />;
+      case 'updateOrCreateSkill':
+      case 'updateSkillProgress':
+        return <Trophy className="w-4 h-4 text-[#141519]" />;
+      case 'manageWishlist':
+      case 'addWishlistItem':
+        return <ShoppingBag className="w-4 h-4 text-[#141519]" />;
+      case 'scheduleCalendarEvent':
+      case 'addScheduleBlock':
+        return <Calendar className="w-4 h-4 text-[#141519]" />;
+      case 'createGoogleTask':
+        return <CheckSquare className="w-4 h-4 text-[#141519]" />;
+      default:
+        return <Bookmark className="w-4 h-4 text-[#141519]" />;
+    }
+  };
+
+  const handleSend = async (promptText?: string) => {
+    const textToSend = (promptText ?? input).trim();
     if (!textToSend || isLoading) return;
 
-    const userMsg: AssistantMessage = {
+    setIsListening(false);
+    setIsSpeaking(false);
+
+    const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: textToSend,
-      timestamp: new Date().toLocaleTimeString('es-ES', {
+      timestamp: new Date().toLocaleTimeString([], {
         hour: '2-digit',
         minute: '2-digit',
       }),
     };
 
     setMessages((prev) => [...prev, userMsg]);
-    if (!customPrompt) setInput('');
+    if (!promptText) setInput('');
     setIsLoading(true);
 
     try {
-      const response = await fetch('/api/assistant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: textToSend,
-          context: { skills },
-        }),
-      });
+      let rawActions: Array<{ name: string; args: any }> = [];
+      let assistantReply = '';
 
-      const data = await response.json();
-      const rawActions: Array<{ name: string; args: Record<string, any> }> =
-        data.actions || [];
+      try {
+        const res = await fetch('/api/assistant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: textToSend,
+            contextState: {
+              skills: skills.map((s) => ({
+                name: s.name,
+                branch: s.branch,
+                level: s.level,
+                progress: s.progress,
+                hours: s.hoursInvested,
+              })),
+              vaultCount: vault.length,
+              wishlistCount: wishlist.length,
+              extraSavingsPool,
+              scheduleToday: schedule.map((b) => ({
+                title: b.title,
+                time: b.time,
+                dayOfMonth: b.dayOfMonth,
+              })),
+            },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          rawActions = Array.isArray(data.actions) ? data.actions : [];
+          assistantReply = data.reply || '';
+        } else {
+          rawActions = parseNaturalLanguageCommand(textToSend, { skills });
+          assistantReply = buildContextualReply(rawActions);
+        }
+      } catch {
+        rawActions = parseNaturalLanguageCommand(textToSend, { skills });
+        assistantReply = buildContextualReply(rawActions);
+      }
+
+      if (rawActions.length === 0) {
+        rawActions = parseNaturalLanguageCommand(textToSend, { skills });
+        if (!assistantReply) {
+          assistantReply = buildContextualReply(rawActions);
+        }
+      }
 
       const executedRecords: AssistantActionRecord[] = [];
       for (const act of rawActions) {
         const record = await onExecuteAction(act);
-        if (record) executedRecords.push(record);
+        if (record) {
+          executedRecords.push(record);
+        }
       }
 
-      const assistantMsg: AssistantMessage = {
+      const finalReplyText =
+        assistantReply ||
+        (executedRecords.length > 0
+          ? '¡Listo, guardado en Aether!'
+          : 'Solicitud procesada.');
+
+      const assistantMsg: ChatMessage = {
         id: `ai-${Date.now()}`,
         role: 'assistant',
-        content:
-          data.reply ||
-          'Listo, he sincronizado tus cambios con Firebase y Google Workspace.',
-        timestamp: new Date().toLocaleTimeString('es-ES', {
+        content: finalReplyText,
+        timestamp: new Date().toLocaleTimeString([], {
           hour: '2-digit',
           minute: '2-digit',
         }),
-        actions: executedRecords,
+        actionsTaken: executedRecords,
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      triggerAssistantSpeakingWave(finalReplyText);
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -125,11 +358,8 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
           id: `err-${Date.now()}`,
           role: 'assistant',
           content:
-            'No pude procesar la solicitud en este momento. Intenta de nuevo en unos segundos.',
-          timestamp: new Date().toLocaleTimeString('es-ES', {
-            hour: '2-digit',
-            minute: '2-digit',
-          }),
+            'No pude completar la acción en este momento. Inténtalo de nuevo.',
+          timestamp: 'Ahora',
         },
       ]);
     } finally {
@@ -137,83 +367,61 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
     }
   };
 
-  const toggleVoiceDictation = () => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      setInput('Hoy entrené 1 hora de Básquet y metí 8/10 triples');
-      return;
-    }
-
-    if (isListening) {
-      setIsListening(false);
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'es-ES';
-    recognition.interimResults = false;
-    setIsListening(true);
-
-    recognition.onresult = (event: any) => {
-      const transcript = event.results?.[0]?.[0]?.transcript;
-      if (transcript) {
-        setInput(transcript);
-      }
-      setIsListening(false);
-    };
-
-    recognition.onerror = () => {
-      setIsListening(false);
-    };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
-    recognition.start();
+  const getWaveAnimClass = () => {
+    if (aiState === 'listening') return 'aether-vbar-listening';
+    if (aiState === 'thinking') return 'aether-vbar-thinking';
+    if (aiState === 'speaking') return 'aether-vbar-speaking';
+    if (input.trim().length > 0) return 'aether-vbar-thinking';
+    return 'aether-vbar-idle';
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:justify-end p-3 sm:p-6 bg-[#141519]/35 backdrop-blur-xs animate-fadeIn">
-      <div className="w-full max-w-[475px] bg-[#FFFFFF] rounded-[28px] border border-[#EEF1F5] shadow-floating-dock overflow-hidden flex flex-col max-h-[88vh]">
-        {/* Header with Sparkles icon in circular #A8E6E3 */}
-        <div className="bg-soft-mesh-header px-6 py-5 border-b border-[#EEF1F5] flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-full bg-[#A8E6E3] border-2 border-[#141519] text-[#141519] keep-dark-text flex items-center justify-center shadow-xs shrink-0">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="text-[1.05rem] font-bold text-[#141519]">
-                  Aether Assistant
-                </h3>
-                <span className="px-2.5 py-0.5 rounded-full bg-[#141519] text-white text-[0.66rem] font-semibold">
-                  {isCloudConnected ? 'Firestore + Google API' : 'Local Sync'}
-                </span>
-              </div>
-              <p className="text-[0.74rem] font-medium text-[#6E7480]">
-                {isGoogleWorkspaceConnected
-                  ? 'Sincronizado con Firebase, Calendar y Tasks'
-                  : 'Conectado a Bóveda, Habilidades, Wishlist y Agenda'}
-              </p>
-            </div>
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#141519]/40 backdrop-blur-sm animate-fadeIn">
+      <div className="bg-[#FFFFFF] rounded-[28px] w-full max-w-lg border border-[#EEF1F5] shadow-[0_24px_60px_-12px_rgba(20,21,25,0.22)] overflow-hidden flex flex-col max-h-[86vh]">
+        {/* Cabecera ultra limpia: solo título discreto y cierre */}
+        <div className="px-6 pt-5 pb-3 flex items-center justify-between">
+          <span className="text-[0.95rem] font-bold text-[#141519] tracking-tight">
+            Aether Assistant
+          </span>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Cerrar asistente"
-            className="w-9 h-9 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] text-[#141519] flex items-center justify-center transition-colors cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            {messages.length > 1 && (
+              <button
+                onClick={() => setMessages(INITIAL_MESSAGES)}
+                title="Limpiar historial"
+                className="w-8 h-8 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] flex items-center justify-center text-[#6E7480] transition-colors cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              aria-label="Cerrar asistente"
+              className="w-8 h-8 rounded-full bg-[#F7F9FB] hover:bg-[#141519] hover:text-[#FFFFFF] flex items-center justify-center text-[#6E7480] transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
-        {/* Messages stream */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-[#F3F6F8]/60">
+        {/* Historial de Chat Limpio */}
+        <div className="flex-1 overflow-y-auto px-6 py-3 space-y-4">
+          {/* Sugerencias iniciales solo cuando no hay conversación activa */}
+          {messages.length === 1 && (
+            <div className="flex flex-wrap gap-2 pb-1">
+              {QUICK_PROMPTS.map((q) => (
+                <button
+                  key={q}
+                  onClick={() => handleSend(q)}
+                  disabled={isLoading}
+                  className="px-3.5 py-2 rounded-2xl bg-[#F7F9FB] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[0.74rem] font-medium text-[#6E7480] hover:text-[#141519] text-left transition-colors cursor-pointer"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          )}
+
           {messages.map((msg) => (
             <div
               key={msg.id}
@@ -221,79 +429,169 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                 msg.role === 'user' ? 'items-end' : 'items-start'
               }`}
             >
-              <div className="flex items-center gap-2 mb-1 px-1">
-                {msg.role === 'assistant' && (
-                  <Bot className="w-3.5 h-3.5 text-[#141519]" />
-                )}
-                <span className="text-[0.68rem] font-semibold text-[#8E95A2] tabular-nums">
-                  {msg.role === 'user' ? 'Tú' : 'Aether Assistant'} ·{' '}
-                  {msg.timestamp}
-                </span>
-              </div>
-
               <div
-                className={`max-w-[92%] rounded-[22px] px-4 py-3 text-[0.85rem] leading-relaxed ${
+                className={`max-w-[90%] rounded-[22px] px-4 py-3 text-[0.875rem] leading-relaxed ${
                   msg.role === 'user'
-                    ? 'bg-[#141519] text-white rounded-br-[6px]'
-                    : 'bg-white text-[#141519] border border-[#EEF1F5] shadow-bento rounded-bl-[6px]'
+                    ? 'bg-[#141519] text-[#FFFFFF] rounded-br-[6px]'
+                    : 'bg-[#F7F9FB] text-[#141519] border border-[#EEF1F5] rounded-bl-[6px]'
                 }`}
               >
-                <p>{msg.content}</p>
+                <p className="font-medium whitespace-pre-line">{msg.content}</p>
 
-                {/* Soft Bento Confirmation Cards for Executed Actions */}
-                {msg.actions && msg.actions.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-[#EEF1F5] space-y-2.5">
-                    {msg.actions.map((act, idx) => {
-                      const cardGradient =
-                        act.accent === 'lavender'
-                          ? 'bg-lavender-gradient'
-                          : 'bg-mint-gradient';
+                {/* Tarjetas Soft Bento en Miniatura */}
+                {msg.actionsTaken && msg.actionsTaken.length > 0 && (
+                  <div className="mt-3 space-y-2.5">
+                    {msg.actionsTaken.map((action, idx) => {
+                      const isMint = action.accent !== 'lavender';
+                      const isPlayingThis =
+                        Boolean(action.audioPreviewUrl) &&
+                        playingUrl === action.audioPreviewUrl;
 
                       return (
                         <div
-                          key={idx}
-                          className={`${cardGradient} inner-card-stroke rounded-[20px] p-3.5 flex flex-col gap-2`}
+                          key={`${action.name}-${idx}`}
+                          className="rounded-[20px] p-3.5 text-[#141519] transition-all shadow-[0_4px_20px_-4px_rgba(19,25,39,0.05)]"
+                          style={{
+                            background: isMint
+                              ? 'linear-gradient(135deg, #98E2DE 0%, #CDF4F2 50%, #A2E5E1 100%)'
+                              : 'linear-gradient(135deg, #AEBDF6 0%, #DAE2FC 50%, #B5C2F7 100%)',
+                            border: '2px solid rgba(255, 255, 255, 0.75)',
+                          }}
                         >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="w-8 h-8 rounded-[12px] bg-white text-[#141519] keep-dark-text flex items-center justify-center shrink-0 shadow-2xs">
-                                <CheckCircle2 className="w-4 h-4" />
-                              </div>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                              {action.imageUrl ? (
+                                <img
+                                  src={action.imageUrl}
+                                  alt={action.title || action.summary}
+                                  className="w-12 h-12 rounded-[14px] object-cover border border-white/80 shadow-xs shrink-0 bg-white"
+                                />
+                              ) : (
+                                <div className="w-11 h-11 rounded-[14px] bg-[#FFFFFF] flex items-center justify-center shadow-xs shrink-0 border border-white/80">
+                                  {getActionIcon(action.name, action.spotifyUrl)}
+                                </div>
+                              )}
+
                               <div className="min-w-0">
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="text-[0.66rem] font-bold uppercase tracking-wider text-[#141519]/75 keep-dark-text">
-                                    {act.name}
-                                  </span>
-                                  {act.sourceBadge && (
-                                    <span className="px-2 py-0.5 rounded-full bg-white/80 text-[#141519] keep-dark-text text-[0.64rem] font-bold flex items-center gap-1">
-                                      <Database className="w-2.5 h-2.5" />
-                                      {act.sourceBadge}
-                                    </span>
+                                <div className="flex items-center gap-1.5 flex-wrap text-[0.68rem] font-bold text-[#141519]/80">
+                                  <span>{action.badgeText || 'Guardado'}</span>
+                                  {action.secondaryBadge && (
+                                    <>
+                                      <span aria-hidden="true">·</span>
+                                      <span>{action.secondaryBadge}</span>
+                                    </>
                                   )}
                                 </div>
-                                <span className="block text-[0.82rem] font-bold text-[#141519] keep-dark-text leading-snug mt-0.5">
-                                  {act.summary}
-                                </span>
+                                <h4 className="text-[0.92rem] font-bold text-[#141519] truncate mt-0.5">
+                                  {action.title || action.summary}
+                                </h4>
+                                {action.subtitle && (
+                                  <p className="text-[0.73rem] font-medium text-[#141519]/75 truncate">
+                                    {action.subtitle}
+                                  </p>
+                                )}
                               </div>
                             </div>
 
-                            <button
-                              type="button"
-                              onClick={() => {
-                                onNavigateTab(act.targetModule);
-                                onClose();
-                              }}
-                              className="px-2.5 py-1 rounded-full bg-[#141519] text-white text-[0.68rem] font-semibold flex items-center gap-1 shrink-0 cursor-pointer"
-                            >
-                              <span>Abrir</span>
-                              <ArrowUpRight className="w-3 h-3" />
-                            </button>
+                            {action.targetModule && (
+                              <button
+                                onClick={() => {
+                                  onNavigateTab(action.targetModule!);
+                                  onClose();
+                                }}
+                                className="px-2.5 py-1.5 rounded-full bg-[#141519] text-[#FFFFFF] text-[0.68rem] font-semibold flex items-center gap-1 hover:bg-[#2A2C34] transition-colors cursor-pointer shrink-0"
+                              >
+                                <span>Ver</span>
+                                <ArrowUpRight className="w-3 h-3" />
+                              </button>
+                            )}
                           </div>
 
-                          {act.details && (
-                            <p className="text-[0.72rem] font-medium text-[#141519]/80 keep-dark-text bg-white/45 rounded-[12px] px-2.5 py-1.5 border border-white/50">
-                              {act.details}
+                          {action.tags && action.tags.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2 text-[0.68rem] font-semibold text-[#141519]/75">
+                              {action.tags.slice(0, 4).map((tag, tIdx) => (
+                                <React.Fragment key={tag}>
+                                  {tIdx > 0 && <span aria-hidden="true">·</span>}
+                                  <span>{tag}</span>
+                                </React.Fragment>
+                              ))}
+                            </div>
+                          )}
+
+                          {action.details && (
+                            <p className="text-[0.72rem] font-medium text-[#141519]/80 mt-2 line-clamp-2">
+                              {action.details}
                             </p>
+                          )}
+
+                          {(action.audioPreviewUrl || action.spotifyUrl) && (
+                            <div className="mt-2.5 pt-2 border-t border-white/40 flex items-center justify-between gap-2">
+                              {action.audioPreviewUrl ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    toggleMiniPreview(action.audioPreviewUrl)
+                                  }
+                                  className="px-3 py-1 rounded-full bg-[#141519] text-[#FFFFFF] text-[0.68rem] font-semibold inline-flex items-center gap-1.5 hover:bg-[#2A2C34] transition-colors cursor-pointer"
+                                >
+                                  {isPlayingThis ? (
+                                    <>
+                                      <Pause className="w-3 h-3 fill-current" />
+                                      <span>Pausar 30s</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Play className="w-3 h-3 fill-current" />
+                                      <span>Escuchar 30s</span>
+                                    </>
+                                  )}
+                                </button>
+                              ) : (
+                                <span className="text-[0.66rem] font-semibold text-[#141519]/70 inline-flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  Spotify
+                                </span>
+                              )}
+
+                              {action.spotifyUrl && (
+                                <a
+                                  href={action.spotifyUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-3 py-1 rounded-full bg-white/80 hover:bg-white text-[#141519] text-[0.68rem] font-bold inline-flex items-center gap-1 transition-colors"
+                                >
+                                  <span>Abrir en Spotify</span>
+                                  <ExternalLink className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          )}
+
+                          {typeof action.progressPct === 'number' && (
+                            <div className="mt-2.5">
+                              <div className="flex items-center justify-between text-[0.66rem] font-bold text-[#141519]/80 mb-1">
+                                <span>
+                                  {action.progressLabel || 'Progreso'}
+                                </span>
+                                <span>{Math.min(100, action.progressPct)}%</span>
+                              </div>
+                              <div
+                                className="w-full h-2 rounded-full overflow-hidden p-0.5"
+                                style={{
+                                  backgroundColor: 'rgba(255, 255, 255, 0.38)',
+                                }}
+                              >
+                                <div
+                                  className="h-full rounded-full bg-[#FFFFFF] transition-all duration-500"
+                                  style={{
+                                    width: `${Math.min(
+                                      100,
+                                      Math.max(8, action.progressPct)
+                                    )}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
                           )}
                         </div>
                       );
@@ -303,78 +601,98 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
               </div>
             </div>
           ))}
-
-          {isLoading && (
-            <div className="flex items-center gap-2.5 px-4 py-3 rounded-[20px] bg-white border border-[#EEF1F5] w-fit">
-              <Loader2 className="w-4 h-4 animate-spin text-[#141519]" />
-              <span className="text-[0.8rem] font-medium text-[#6E7480]">
-                Ejecutando herramientas en Firebase / Google APIs...
-              </span>
-            </div>
-          )}
+          <div ref={chatEndRef} />
         </div>
 
-        {/* Suggested natural language prompts */}
-        <div className="px-5 py-3 bg-white border-t border-[#EEF1F5]">
-          <span className="block text-[0.7rem] font-semibold text-[#8E95A2] mb-2">
-            Prueba una acción en tiempo real:
-          </span>
-          <div className="flex gap-1.5 overflow-x-auto pb-1">
-            {QUICK_PROMPTS.map((qp) => (
-              <button
-                key={qp}
-                type="button"
-                onClick={() => handleSend(qp)}
-                className="px-3 py-1.5 rounded-full bg-[#F7F9FB] hover:bg-[#A8E6E3]/50 border border-[#EEF1F5] text-[0.72rem] font-medium text-[#141519] whitespace-nowrap transition-colors cursor-pointer shrink-0"
-              >
-                {qp}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Input bar */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSend();
-          }}
-          className="p-4 bg-white border-t border-[#EEF1F5] flex items-center gap-2"
-        >
-          <button
-            type="button"
-            onClick={toggleVoiceDictation}
-            title="Dictar comando por voz"
-            className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors shrink-0 cursor-pointer ${
-              isListening
-                ? 'bg-[#F28B82] text-[#141519]'
-                : 'bg-[#F7F9FB] hover:bg-[#EBF0F5] text-[#141519]'
+        {/* Barra Inferior Flotante y Unificada estilo Gemini Live */}
+        <div className="px-5 pb-5 pt-2">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSend();
+            }}
+            className={`flex items-center gap-3 p-2 rounded-[26px] bg-[#F7F9FB] border transition-all duration-300 shadow-[0_8px_28px_-6px_rgba(20,21,25,0.08)] ${
+              isWaveActive
+                ? 'border-[#BBC6F8] bg-[#FFFFFF]'
+                : 'border-[#EEF1F5]'
             }`}
           >
-            {isListening ? (
-              <MicOff className="w-4 h-4" />
-            ) : (
-              <Mic className="w-4 h-4" />
-            )}
-          </button>
+            {/* Orbe / Ecualizador de Ondas de Voz a la Izquierda (Estilo Gemini Live) */}
+            <button
+              type="button"
+              onClick={toggleVoiceCapture}
+              title={
+                isListening
+                  ? 'Detener voz'
+                  : 'Activar voz estilo Gemini Live'
+              }
+              aria-label="Control de voz Gemini Live"
+              className="relative w-11 h-11 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-95 overflow-hidden"
+              style={{
+                background: isWaveActive
+                  ? 'linear-gradient(135deg, #AEBDF6 0%, #DAE2FC 55%, #98E2DE 100%)'
+                  : 'linear-gradient(135deg, rgba(187,198,248,0.45) 0%, rgba(243,246,248,0.9) 100%)',
+                border: '1.5px solid rgba(255, 255, 255, 0.9)',
+              }}
+            >
+              {/* Halo suave de fondo cuando está escuchando, pensando o hablando */}
+              {isWaveActive && (
+                <span
+                  className="absolute inset-0 rounded-full aether-orb-halo-ring"
+                  style={{
+                    background:
+                      'radial-gradient(circle, rgba(187,198,248,0.65) 0%, rgba(20,21,25,0) 75%)',
+                  }}
+                />
+              )}
 
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ej: Hoy entrené 1h de Básquet, agéndame..."
-            className="flex-1 h-10 px-4 rounded-full bg-[#F7F9FB] border border-[#EEF1F5] text-[0.85rem] text-[#141519] placeholder:text-[#A0A6B2] focus:outline-none focus:border-[#141519]"
-          />
+              {/* Ecualizador orgánico de 5 barras fluidas */}
+              <div className="relative z-10 flex items-center justify-center gap-[3px] h-6">
+                {LIVE_WAVE_BARS.map((bar, idx) => (
+                  <span
+                    key={idx}
+                    className={`w-[3px] rounded-full aether-vbar ${getWaveAnimClass()}`}
+                    style={{
+                      height: `${isWaveActive ? bar.activeH : bar.idleH}px`,
+                      background:
+                        bar.tone === 'charcoal'
+                          ? '#141519'
+                          : isWaveActive
+                          ? '#141519'
+                          : '#7A8499',
+                      animationDelay: bar.delay,
+                    }}
+                  />
+                ))}
+              </div>
+            </button>
 
-          <button
-            type="submit"
-            disabled={!input.trim() || isLoading}
-            className="h-10 px-4 rounded-full bg-[#141519] hover:bg-[#2A2C34] disabled:opacity-40 text-white text-[0.8rem] font-semibold flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer"
-          >
-            <span>Enviar</span>
-            <Send className="w-3.5 h-3.5" />
-          </button>
-        </form>
+            {/* Campo de entrada limpio sin ruido visual */}
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={
+                isListening
+                  ? 'Escuchando...'
+                  : isLoading
+                  ? 'Procesando...'
+                  : 'Habla o escribe a Aether...'
+              }
+              className="flex-1 bg-transparent py-2 text-[0.9rem] font-medium text-[#141519] placeholder-[#A0A6B2] focus:outline-none"
+            />
+
+            {/* Botón de envío circular en negro carbón */}
+            <button
+              type="submit"
+              disabled={!input.trim() || isLoading}
+              aria-label="Enviar mensaje"
+              className="w-10 h-10 rounded-full bg-[#141519] hover:bg-[#2A2C34] disabled:opacity-25 text-[#FFFFFF] flex items-center justify-center transition-all cursor-pointer shrink-0"
+            >
+              <ArrowUp className="w-4 h-4" />
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
