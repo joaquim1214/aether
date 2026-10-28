@@ -1,0 +1,248 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidStringArray(arr, maxLen) {
+      return arr is list && arr.size() <= maxLen && (arr.size() == 0 || (arr[0] is string && arr[0].size() <= 100));
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidVaultItem(data) {
+      return data.keys().hasAll([
+          'userId', 'title', 'creator', 'category', 'vaultGroup',
+          'rating', 'tier', 'consumedDate', 'tags', 'review',
+          'accent', 'artVariant', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'title', 'creator', 'category', 'vaultGroup',
+          'rating', 'tier', 'consumedDate', 'tags', 'review',
+          'accent', 'artVariant', 'isFeaturedMasterpiece',
+          'imageUrl', 'audioPreviewUrl', 'releaseYear',
+          'imdbId', 'imdbRating', 'imdbVotes', 'actors', 'plot',
+          'releaseDate', 'daysRemaining', 'hypeLevel', 'releaseFormat',
+          'duration', 'videoUrl', 'keyTakeaway', 'relationshipTag',
+          'personMeta', 'personInitials', 'location', 'createdAt'
+        ]) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.creator is string && data.creator.size() <= 200 &&
+        data.category is string && data.category.size() <= 60 &&
+        data.vaultGroup in ['peliculas_series', 'proximamente', 'musica', 'videos', 'personas', 'momentos'] &&
+        data.rating is number && data.rating >= 0 && data.rating <= 10 &&
+        data.tier in ['S', 'A', 'B'] &&
+        data.consumedDate is string && data.consumedDate.size() <= 60 &&
+        isValidStringArray(data.tags, 10) &&
+        data.review is string && data.review.size() <= 1500 &&
+        data.accent in ['mint', 'lavender'] &&
+        data.artVariant is string && data.artVariant.size() <= 40 &&
+        data.createdAt is string && data.createdAt.size() <= 60 &&
+        (!('isFeaturedMasterpiece' in data) || data.isFeaturedMasterpiece is bool) &&
+        (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 1000)) &&
+        (!('audioPreviewUrl' in data) || (data.audioPreviewUrl is string && data.audioPreviewUrl.size() <= 1000)) &&
+        (!('releaseYear' in data) || (data.releaseYear is string && data.releaseYear.size() <= 20)) &&
+        (!('imdbId' in data) || (data.imdbId is string && data.imdbId.size() <= 30)) &&
+        (!('imdbRating' in data) || (data.imdbRating is string && data.imdbRating.size() <= 20)) &&
+        (!('imdbVotes' in data) || (data.imdbVotes is string && data.imdbVotes.size() <= 40)) &&
+        (!('actors' in data) || (data.actors is string && data.actors.size() <= 400)) &&
+        (!('plot' in data) || (data.plot is string && data.plot.size() <= 1500)) &&
+        (!('releaseDate' in data) || (data.releaseDate is string && data.releaseDate.size() <= 60)) &&
+        (!('daysRemaining' in data) || (data.daysRemaining is number && data.daysRemaining >= 0 && data.daysRemaining <= 3650)) &&
+        (!('hypeLevel' in data) || (data.hypeLevel is number && data.hypeLevel >= 0 && data.hypeLevel <= 100)) &&
+        (!('releaseFormat' in data) || (data.releaseFormat is string && data.releaseFormat.size() <= 100)) &&
+        (!('duration' in data) || (data.duration is string && data.duration.size() <= 30)) &&
+        (!('videoUrl' in data) || (data.videoUrl is string && data.videoUrl.size() <= 500)) &&
+        (!('keyTakeaway' in data) || (data.keyTakeaway is string && data.keyTakeaway.size() <= 600)) &&
+        (!('relationshipTag' in data) || (data.relationshipTag is string && data.relationshipTag.size() <= 40)) &&
+        (!('personMeta' in data) || (data.personMeta is string && data.personMeta.size() <= 200)) &&
+        (!('personInitials' in data) || (data.personInitials is string && data.personInitials.size() <= 6)) &&
+        (!('location' in data) || (data.location is string && data.location.size() <= 150));
+    }
+
+    function isValidSkillRpg(data) {
+      return data.keys().hasAll([
+          'userId', 'name', 'category', 'branch', 'unitLabel',
+          'level', 'progress', 'hoursInvested', 'weeklyTargetHours',
+          'accent', 'iconName', 'tags', 'milestones', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'name', 'category', 'branch', 'unitLabel',
+          'sportStats', 'level', 'progress', 'hoursInvested',
+          'weeklyTargetHours', 'accent', 'iconName', 'tags',
+          'milestones', 'createdAt'
+        ]) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+        data.category is string && data.category.size() <= 100 &&
+        data.branch in ['learning', 'sports'] &&
+        data.unitLabel in ['h', 'Entrenamientos'] &&
+        (!('sportStats' in data) || (data.sportStats is string && data.sportStats.size() <= 200)) &&
+        data.level is number && data.level >= 1 && data.level <= 999 &&
+        data.progress is number && data.progress >= 0 && data.progress <= 100 &&
+        data.hoursInvested is number && data.hoursInvested >= 0 && data.hoursInvested <= 100000 &&
+        data.weeklyTargetHours is number && data.weeklyTargetHours >= 0 && data.weeklyTargetHours <= 168 &&
+        data.accent in ['mint', 'lavender'] &&
+        data.iconName is string && data.iconName.size() <= 40 &&
+        isValidStringArray(data.tags, 10) &&
+        data.milestones is list && data.milestones.size() <= 50 &&
+        (data.milestones.size() == 0 || data.milestones[0] is map) &&
+        data.createdAt is string && data.createdAt.size() <= 60;
+    }
+
+    function isValidWishlistItem(data) {
+      return data.keys().hasAll([
+          'userId', 'name', 'category', 'wishlistTag', 'estimatedPrice',
+          'savedAmount', 'priority', 'purchased', 'link', 'notes',
+          'accent', 'artVariant', 'createdAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'name', 'category', 'wishlistTag', 'estimatedPrice',
+          'savedAmount', 'priority', 'purchased', 'link', 'notes',
+          'accent', 'artVariant', 'createdAt'
+        ]) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 200 &&
+        data.category is string && data.category.size() <= 100 &&
+        data.wishlistTag in ['Tech', 'Deporte / Básquet & Fútbol', 'Setup', 'Caprichos'] &&
+        data.estimatedPrice is number && data.estimatedPrice > 0 && data.estimatedPrice <= 1000000 &&
+        data.savedAmount is number && data.savedAmount >= 0 && data.savedAmount <= 1000000 &&
+        data.priority in ['Alta', 'Media', 'Capricho'] &&
+        data.purchased is bool &&
+        data.link is string && data.link.size() <= 500 &&
+        data.notes is string && data.notes.size() <= 1000 &&
+        data.accent in ['mint', 'lavender'] &&
+        data.artVariant is string && data.artVariant.size() <= 40 &&
+        data.createdAt is string && data.createdAt.size() <= 60;
+    }
+
+    function isValidWishlistSettings(data) {
+      return data.keys().hasAll(['userId', 'extraSavingsPool', 'updatedAt']) &&
+        data.keys().hasOnly(['userId', 'extraSavingsPool', 'updatedAt']) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+        data.extraSavingsPool is number && data.extraSavingsPool >= 0 && data.extraSavingsPool <= 10000000 &&
+        data.updatedAt is string && data.updatedAt.size() <= 60;
+    }
+
+    function isValidDailyHours(data) {
+      return data.keys().hasAll([
+          'userId', 'dayShort', 'dayLabel', 'dateNum',
+          'dateKey', 'hours', 'focusTopic', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'dayShort', 'dayLabel', 'dateNum',
+          'dateKey', 'hours', 'focusTopic', 'updatedAt'
+        ]) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+        data.dayShort is string && data.dayShort.size() <= 20 &&
+        data.dayLabel is string && data.dayLabel.size() <= 60 &&
+        data.dateNum is number && data.dateNum >= 1 && data.dateNum <= 31 &&
+        data.dateKey is string && data.dateKey.size() <= 20 &&
+        data.hours is number && data.hours >= 0 && data.hours <= 24 &&
+        data.focusTopic is string && data.focusTopic.size() <= 200 &&
+        data.updatedAt is string && data.updatedAt.size() <= 60;
+    }
+
+    // 4. Collection Match Blocks
+    match /vault_items/{itemId} {
+      allow get: if isVerifiedUser() && isValidId(itemId) && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isVerifiedUser() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(itemId) && isValidVaultItem(incoming());
+      allow update: if isVerifiedUser() && isValidId(itemId) && isValidVaultItem(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'creator', 'category', 'vaultGroup', 'rating', 'tier',
+          'consumedDate', 'tags', 'review', 'accent', 'artVariant',
+          'isFeaturedMasterpiece', 'imageUrl', 'audioPreviewUrl', 'releaseYear',
+          'imdbId', 'imdbRating', 'imdbVotes', 'actors', 'plot',
+          'releaseDate', 'daysRemaining', 'hypeLevel',
+          'releaseFormat', 'duration', 'videoUrl', 'keyTakeaway',
+          'relationshipTag', 'personMeta', 'personInitials', 'location'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(itemId) && existing().userId == request.auth.uid;
+    }
+
+    match /skills_rpg/{skillId} {
+      allow get: if isVerifiedUser() && isValidId(skillId) && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isVerifiedUser() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(skillId) && isValidSkillRpg(incoming());
+      allow update: if isVerifiedUser() && isValidId(skillId) && isValidSkillRpg(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'category', 'branch', 'unitLabel', 'sportStats',
+          'level', 'progress', 'hoursInvested', 'weeklyTargetHours',
+          'accent', 'iconName', 'tags', 'milestones'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(skillId) && existing().userId == request.auth.uid;
+    }
+
+    match /wishlist_items/{itemId} {
+      allow get: if isVerifiedUser() && isValidId(itemId) && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isVerifiedUser() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(itemId) && isValidWishlistItem(incoming());
+      allow update: if isVerifiedUser() && isValidId(itemId) && isValidWishlistItem(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'category', 'wishlistTag', 'estimatedPrice',
+          'savedAmount', 'priority', 'purchased', 'link',
+          'notes', 'accent', 'artVariant'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(itemId) && existing().userId == request.auth.uid;
+    }
+
+    match /wishlist_settings/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isVerifiedUser() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid && isValidWishlistSettings(incoming());
+      allow update: if isVerifiedUser() && isValidId(userId) && isValidWishlistSettings(incoming()) &&
+        userId == request.auth.uid &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['extraSavingsPool', 'updatedAt']);
+      allow delete: if isVerifiedUser() && isValidId(userId) && userId == request.auth.uid && existing().userId == request.auth.uid;
+    }
+
+    match /daily_hours/{dayId} {
+      allow get: if isVerifiedUser() && isValidId(dayId) && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isVerifiedUser() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(dayId) && isValidDailyHours(incoming());
+      allow update: if isVerifiedUser() && isValidId(dayId) && isValidDailyHours(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'dayShort', 'dayLabel', 'dateNum', 'dateKey', 'hours', 'focusTopic', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(dayId) && existing().userId == request.auth.uid;
+    }
+  }
+}

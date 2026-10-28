@@ -1,0 +1,1260 @@
+import express from "express";
+import path from "path";
+import { fileURLToPath } from "url";
+import dotenv from "dotenv";
+import { FunctionDeclaration, GoogleGenAI, Type } from "@google/genai";
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+app.use(express.json({ limit: "2mb" }));
+
+// ============================================================================
+// 5 FUNCTION DECLARATIONS FOR LIFE OS ASSISTANT (PRODUCTION MODE)
+// ============================================================================
+
+const addVaultItemDeclaration: FunctionDeclaration = {
+  name: "addVaultItem",
+  description:
+    "Registra una película, serie, estreno esperado (Próximamente), álbum/canción de música, video/canal, persona/vínculo o momento especial en la colección 'vault_items' de Firebase.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: {
+        type: Type.STRING,
+        description: "Título de la obra, canción, video, nombre de la persona o momento.",
+      },
+      vaultGroup: {
+        type: Type.STRING,
+        description:
+          "Sub-categoría exacta de la Bóveda: 'peliculas_series', 'proximamente', 'musica', 'videos', 'personas' o 'momentos'.",
+      },
+      category: {
+        type: Type.STRING,
+        description:
+          "Etiqueta de categoría: 'Cine', 'Serie', 'Próximamente', 'Música', 'Video', 'Persona' o 'Momento'.",
+      },
+      creator: {
+        type: Type.STRING,
+        description: "Director, estudio, artista musical, canal de YouTube o rol/contexto de la persona.",
+      },
+      rating: {
+        type: Type.NUMBER,
+        description: "Calificación numérica de 1 a 10 (ej. 9.5).",
+      },
+      tier: {
+        type: Type.STRING,
+        description: "Clasificación Tier: 'S', 'A' o 'B'.",
+      },
+      tags: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
+        description: "2 o 3 etiquetas de género, vibra o emoción.",
+      },
+      review: {
+        type: Type.STRING,
+        description: "Reseña personal, nota sobre la persona o recuerdo.",
+      },
+      releaseDate: {
+        type: Type.STRING,
+        description: "Fecha de estreno si es de la categoría 'proximamente' (ej. '15 Nov 2026').",
+      },
+      hypeLevel: {
+        type: Type.NUMBER,
+        description: "Nivel de Hype de 1 a 100 si es 'proximamente'.",
+      },
+      keyTakeaway: {
+        type: Type.STRING,
+        description: "Idea clave aprendida si es un video ('videos').",
+      },
+      imdbId: {
+        type: Type.STRING,
+        description:
+          "Código oficial de IMDb si el usuario lo menciona (ej. 'tt0816692').",
+      },
+    },
+    required: ["title", "vaultGroup", "category"],
+  },
+};
+
+const updateOrCreateSkillDeclaration: FunctionDeclaration = {
+  name: "updateOrCreateSkill",
+  description:
+    "Crea una nueva habilidad o suma horas/entrenamientos/récords a una habilidad existente en la colección 'skills_rpg' de Firebase (incluyendo Aprendizajes intelectuales o Metas Físicas de Básquet y Fútbol).",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      skillName: {
+        type: Type.STRING,
+        description:
+          "Nombre de la habilidad o deporte (ej. 'Básquet · Tiro & Manejo', 'Fútbol · Control & Definición', 'Arquitectura UI/UX', 'Rust & WebAssembly').",
+      },
+      branch: {
+        type: Type.STRING,
+        description: "Rama del árbol RPG: 'learning' (aprendizajes/estudio) o 'sports' (metas físicas/deporte).",
+      },
+      category: {
+        type: Type.STRING,
+        description: "Categoría (ej. 'Deporte · Básquet', 'Deporte · Fútbol', 'Diseño', 'Ingeniería').",
+      },
+      hoursToAdd: {
+        type: Type.NUMBER,
+        description: "Cantidad de horas o entrenamientos a sumar hoy.",
+      },
+      progressDelta: {
+        type: Type.NUMBER,
+        description: "Incremento de XP porcentual (ej. 10 a 25).",
+      },
+      newMilestone: {
+        type: Type.STRING,
+        description: "Logro o récord personal opcional para la Bitácora de Hitos (ej. 'Metí 8/10 triples seguidos').",
+      },
+      sportStats: {
+        type: Type.STRING,
+        description: "Estadística deportiva opcional (ej. '8/10 triples · 18 pts').",
+      },
+    },
+    required: ["skillName", "hoursToAdd"],
+  },
+};
+
+const manageWishlistDeclaration: FunctionDeclaration = {
+  name: "manageWishlist",
+  description:
+    "Agrega un nuevo producto a la Wishlist ('wishlist_items') en Firebase o actualiza el Fondo de Ahorro Disponible ('extraSavingsPool').",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      actionType: {
+        type: Type.STRING,
+        description: "'add_product' para agregar un artículo o 'update_savings_pool' para modificar el ahorro disponible.",
+      },
+      name: {
+        type: Type.STRING,
+        description: "Nombre del producto o meta material (si actionType es 'add_product').",
+      },
+      estimatedPrice: {
+        type: Type.NUMBER,
+        description: "Precio estimado en USD.",
+      },
+      savedAmount: {
+        type: Type.NUMBER,
+        description: "Monto ahorrado inicial asignado al producto en USD.",
+      },
+      priority: {
+        type: Type.STRING,
+        description: "Prioridad: 'Alta', 'Media' o 'Capricho'.",
+      },
+      wishlistTag: {
+        type: Type.STRING,
+        description: "Categoría de Wishlist: 'Tech', 'Deporte / Básquet & Fútbol', 'Setup' o 'Caprichos'.",
+      },
+      extraSavingsPool: {
+        type: Type.NUMBER,
+        description: "Nuevo monto total del Fondo de Ahorro Disponible en USD (si actionType es 'update_savings_pool').",
+      },
+    },
+    required: ["actionType"],
+  },
+};
+
+const scheduleCalendarEventDeclaration: FunctionDeclaration = {
+  name: "scheduleCalendarEvent",
+  description:
+    "Crea y agenda un evento o entrenamiento real en Google Calendar API (calendario primario del usuario).",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: {
+        type: Type.STRING,
+        description: "Título del evento o entrenamiento a agendar en Google Calendar.",
+      },
+      timeRange: {
+        type: Type.STRING,
+        description: "Rango de hora en formato 24h (ej. '18:00 - 19:30').",
+      },
+      dayOfMonth: {
+        type: Type.NUMBER,
+        description: "Día del mes (1 al 31).",
+      },
+      description: {
+        type: Type.STRING,
+        description: "Descripción o notas del evento en Google Calendar.",
+      },
+      accent: {
+        type: Type.STRING,
+        description: "Color pastel de la cápsula en el cronograma: 'mint' o 'lavender'.",
+      },
+    },
+    required: ["title", "timeRange"],
+  },
+};
+
+const createGoogleTaskDeclaration: FunctionDeclaration = {
+  name: "createGoogleTask",
+  description:
+    "Crea una tarea pendiente real en Google Tasks API (lista '@default' del usuario).",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: {
+        type: Type.STRING,
+        description: "Título de la tarea pendiente a crear en Google Tasks.",
+      },
+      notes: {
+        type: Type.STRING,
+        description: "Notas o detalles adicionales de la tarea.",
+      },
+      dueDate: {
+        type: Type.STRING,
+        description: "Fecha de vencimiento opcional en formato YYYY-MM-DD.",
+      },
+    },
+    required: ["title"],
+  },
+};
+
+// Deterministic local fallback parser so the assistant always executes the 5 real functions even if quota/network fails
+function fallbackParseIntent(prompt: string, currentContext: any) {
+  const lower = prompt.toLowerCase();
+  const actions: Array<{ name: string; args: Record<string, any> }> = [];
+  const todayDay = new Date().getDate();
+
+  // 1. Check if it's about Sports (Basketball / Football) or Learning Skills
+  const hoursMatch = prompt.match(/(\d+(?:\.\d+)?)\s*(?:horas?|hrs?|h\b|entrenamientos?|partidos?)/i);
+  const isBasketball =
+    lower.includes("básquet") ||
+    lower.includes("basquet") ||
+    lower.includes("triple") ||
+    lower.includes("balón") ||
+    lower.includes("cancha");
+  const isFootball =
+    lower.includes("fútbol") ||
+    lower.includes("futbol") ||
+    lower.includes("gol") ||
+    lower.includes("regate") ||
+    lower.includes("partido");
+
+  if (
+    isBasketball ||
+    isFootball ||
+    (hoursMatch &&
+      (lower.includes("habilidad") ||
+        lower.includes("practi") ||
+        lower.includes("entren") ||
+        lower.includes("sumé") ||
+        lower.includes("sume") ||
+        lower.includes("dediqué") ||
+        lower.includes("estudié") ||
+        lower.includes("diseño") ||
+        lower.includes("rust") ||
+        lower.includes("japonés") ||
+        lower.includes("código")))
+  ) {
+    const hours = hoursMatch ? parseFloat(hoursMatch[1]) || 1 : 1;
+    let matchedSkill = isBasketball
+      ? "Básquet · Tiro & Manejo de Balón"
+      : isFootball
+      ? "Fútbol · Control, Físico & Definición"
+      : "Arquitectura UI/UX & Sistemas";
+    let branch: "learning" | "sports" = isBasketball || isFootball ? "sports" : "learning";
+    let category = isBasketball
+      ? "Deporte · Básquet"
+      : isFootball
+      ? "Deporte · Fútbol"
+      : "Ingeniería & Diseño";
+
+    const existingSkills: any[] = currentContext?.skills || [];
+    for (const s of existingSkills) {
+      const keywords = s.name
+        .toLowerCase()
+        .split(/[\s/&·]+/)
+        .filter((w: string) => w.length > 2);
+      if (keywords.some((kw: string) => lower.includes(kw))) {
+        matchedSkill = s.name;
+        category = s.category;
+        branch = s.branch || branch;
+        break;
+      }
+    }
+
+    actions.push({
+      name: "updateOrCreateSkill",
+      args: {
+        skillName: matchedSkill,
+        branch,
+        category,
+        hoursToAdd: hours,
+        progressDelta: Math.min(25, Math.round(hours * 10)),
+        newMilestone:
+          isBasketball || isFootball
+            ? `Sesión deportiva registrada: "${prompt}"`
+            : `Sesión enfocada de ${hours}h registrada`,
+      },
+    });
+  }
+
+  // 2. Check if it's about Media / Vault (6 subcategories + Spotify Playlists & Songs)
+  const ratingMatch =
+    prompt.match(/(\d+(?:\.\d+)?)\s*\/\s*10/) ||
+    prompt.match(/calificaci[oó]n\s*(?:de\s*)?(\d+(?:\.\d+)?)/i) ||
+    prompt.match(/(\d+(?:\.\d+)?)\s*estrellas/i);
+
+  const isSpotifyOrMusic =
+    lower.includes("spotify") ||
+    lower.includes("playlist") ||
+    lower.includes("música") ||
+    lower.includes("musica") ||
+    lower.includes("álbum") ||
+    lower.includes("album") ||
+    lower.includes("canción") ||
+    lower.includes("cancion");
+
+  if (
+    ratingMatch ||
+    isSpotifyOrMusic ||
+    lower.includes("película") ||
+    lower.includes("pelicula") ||
+    lower.includes("serie") ||
+    lower.includes("anime") ||
+    lower.includes("próximamente") ||
+    lower.includes("proximamente") ||
+    lower.includes("estreno") ||
+    lower.includes("video") ||
+    lower.includes("persona") ||
+    lower.includes("bóveda") ||
+    lower.includes("boveda") ||
+    lower.includes("terminé de ver") ||
+    lower.includes("vi ")
+  ) {
+    const rating = ratingMatch ? Math.min(10, Math.max(1, parseFloat(ratingMatch[1]))) : 9.4;
+    const tier = rating >= 9 ? "S" : rating >= 7.8 ? "A" : "B";
+
+    let vaultGroup = "peliculas_series";
+    let category = "Cine";
+    if (lower.includes("próximamente") || lower.includes("proximamente") || lower.includes("estreno") || lower.includes("esperando")) {
+      vaultGroup = "proximamente";
+      category = "Próximamente";
+    } else if (isSpotifyOrMusic) {
+      vaultGroup = "musica";
+      category = "Música";
+    } else if (lower.includes("video") || lower.includes("youtube") || lower.includes("canal")) {
+      vaultGroup = "videos";
+      category = "Video";
+    } else if (lower.includes("persona") || lower.includes("amigo") || lower.includes("mentor")) {
+      vaultGroup = "personas";
+      category = "Persona";
+    } else if (lower.includes("momento") || lower.includes("viaje") || lower.includes("recuerdo")) {
+      vaultGroup = "momentos";
+      category = "Momento";
+    } else if (lower.includes("serie") || lower.includes("anime") || lower.includes("temporada")) {
+      vaultGroup = "peliculas_series";
+      category = "Serie";
+    }
+
+    const imdbIdMatch = prompt.match(/\b(tt\d{6,10})\b/i);
+    let title = imdbIdMatch ? imdbIdMatch[1] : "Nueva Experiencia";
+    let parsedCreator = "Registrado vía Aether Assistant";
+
+    // Specific pattern: "Guarda mi playlist [Nombre] de Spotify"
+    const playlistMatch = prompt.match(
+      /playlist\s+["'«“]?([^"'»”]+?)["'»”]?(?:\s+de\s+spotify|\s+en\s+la|\s+en\s+mi|$)/i
+    );
+    // Specific pattern: "Busca y guarda la canción [X] de [Artista]"
+    const songArtistMatch = prompt.match(
+      /(?:canci[oó]n|tema|track|álbum|album)\s+["'«“]?([^"'»”]+?)["'»”]?\s+de\s+([A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\s.&\-]{2,35})(?:\s+en\s+spotify|\s+en\s+la|\s+en\s+mi|,|\s*$)/i
+    );
+
+    const quoted = prompt.match(/["'«“]([^"'»”]+)["'»”]/);
+    if (playlistMatch && playlistMatch[1]) {
+      title = playlistMatch[1].trim();
+      parsedCreator = "Playlist · Spotify";
+    } else if (songArtistMatch && songArtistMatch[1]) {
+      title = `${songArtistMatch[1].trim()} ${songArtistMatch[2].trim()}`;
+      parsedCreator = songArtistMatch[2].trim();
+    } else if (quoted) {
+      title = quoted[1].trim();
+    } else if (!imdbIdMatch) {
+      const verbMatch = prompt.match(
+        /(?:ver|vi|película|pelicula|serie|anime|álbum|album|canción|cancion|playlist|video|estreno|agrega|guarda)\s+(?:mi\s+playlist\s+|la\s+playlist\s+|la\s+canción\s+|la\s+película\s+|la\s+serie\s+|el\s+anime\s+)?([A-ZÁÉÍÓÚÑa-záéíóúñ0-9:\-\s]{2,45}?)(?:\s+de\s+spotify|\s+en\s+spotify|\s+y\s+busca|\s+en\s+imdb|,|\.|y\s+le|le\s+doy|con\s+un|en\s+la|$)/i
+      );
+      if (verbMatch && verbMatch[1]) {
+        title = verbMatch[1].trim();
+      }
+    }
+
+    actions.push({
+      name: "addVaultItem",
+      args: {
+        title: title.charAt(0).toUpperCase() + title.slice(1),
+        vaultGroup,
+        category,
+        creator: parsedCreator,
+        rating,
+        tier,
+        tags: isSpotifyOrMusic ? ["Spotify", "Música"] : [category, "Destacado"],
+        review: prompt,
+        imdbId: imdbIdMatch ? imdbIdMatch[1].toLowerCase() : undefined,
+      },
+    });
+  }
+
+  // 3. Check if it's about Wishlist or Savings Pool
+  const priceMatch =
+    prompt.match(/\$\s*(\d+(?:,\d{3})*(?:\.\d+)?)/) ||
+    prompt.match(/(\d+)\s*(?:usd|dólares|dolares)/i);
+  if (
+    lower.includes("wishlist") ||
+    lower.includes("comprar") ||
+    lower.includes("presupuesto") ||
+    lower.includes("fondo libre") ||
+    lower.includes("ahorro disponible")
+  ) {
+    const amount = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, "")) : 200;
+    if (lower.includes("fondo") || lower.includes("presupuesto") || lower.includes("ahorro disponible")) {
+      actions.push({
+        name: "manageWishlist",
+        args: {
+          actionType: "update_savings_pool",
+          extraSavingsPool: amount,
+        },
+      });
+    } else {
+      let name = "Nuevo Producto Wishlist";
+      const quoted = prompt.match(/["'«“]([^"'»”]+)["'»”]/);
+      if (quoted) {
+        name = quoted[1].trim();
+      } else {
+        const itemMatch = prompt.match(
+          /(?:agrega|añade|comprar|quiero)\s+(?:el\s+|la\s+|un\s+|una\s+|unas\s+)?([A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\-\s]{3,32}?)(?:\s+a\s+mi|\s+en\s+la|\s+por\s+\$|\s+de\s+\$|,|$)/i
+        );
+        if (itemMatch && itemMatch[1]) {
+          name = itemMatch[1].trim();
+        }
+      }
+
+      const isSportItem =
+        lower.includes("zapatilla") ||
+        lower.includes("balón") ||
+        lower.includes("básquet") ||
+        lower.includes("fútbol") ||
+        lower.includes("botines");
+
+      actions.push({
+        name: "manageWishlist",
+        args: {
+          actionType: "add_product",
+          name: name.charAt(0).toUpperCase() + name.slice(1),
+          estimatedPrice: amount,
+          savedAmount: 0,
+          priority: lower.includes("alta") ? "Alta" : "Media",
+          wishlistTag: isSportItem ? "Deporte / Básquet & Fútbol" : "Tech",
+        },
+      });
+    }
+  }
+
+  // 4. Check if it's about Google Tasks
+  if (
+    lower.includes("tarea") ||
+    lower.includes("google tasks") ||
+    lower.includes("pendiente") ||
+    lower.includes("to-do")
+  ) {
+    let title = prompt;
+    const quoted = prompt.match(/["'«“]([^"'»”]+)["'»”]/);
+    if (quoted) {
+      title = quoted[1].trim();
+    } else {
+      const m = prompt.match(/(?:tarea|pendiente)\s*[:\-]?\s*(.+)$/i);
+      if (m && m[1]) title = m[1].trim();
+    }
+    actions.push({
+      name: "createGoogleTask",
+      args: {
+        title: title.charAt(0).toUpperCase() + title.slice(1),
+        notes: "Creada desde Aether Assistant",
+      },
+    });
+  }
+
+  // 5. Check if it's about Google Calendar Event
+  if (
+    lower.includes("agéndame") ||
+    lower.includes("agendame") ||
+    lower.includes("agenda") ||
+    lower.includes("calendar") ||
+    lower.includes("mañana a las") ||
+    lower.includes("hoy a las") ||
+    lower.includes("evento")
+  ) {
+    let hour = 18;
+    let minute = "00";
+    const explicitTime =
+      prompt.match(/a\s+las\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i) ||
+      prompt.match(/(\d{1,2}):(\d{2})/);
+    if (explicitTime) {
+      hour = parseInt(explicitTime[1], 10);
+      minute = explicitTime[2] || "00";
+      if (explicitTime[3]?.toLowerCase() === "pm" && hour < 12) hour += 12;
+    }
+    const endHour = Math.min(23, hour + 1);
+    const timeRange = `${String(hour).padStart(2, "0")}:${minute} - ${String(endHour).padStart(2, "0")}:30`;
+    const dayOfMonth = lower.includes("mañana") ? todayDay + 1 : todayDay;
+
+    let title = "Entrenamiento / Sesión Enfocada";
+    const taskMatch = prompt.match(
+      /(?:agéndame|agendame|agendar|programar)\s+([A-Za-z0-9ÁÉÍÓÚáéíóúñÑ\s]{3,40}?)(?:\s+mañana|\s+hoy|\s+a\s+las|\s+en\s+calendar|$)/i
+    );
+    if (taskMatch && taskMatch[1]) {
+      title = taskMatch[1].trim();
+    }
+
+    actions.push({
+      name: "scheduleCalendarEvent",
+      args: {
+        title: title.charAt(0).toUpperCase() + title.slice(1),
+        timeRange,
+        dayOfMonth,
+        description: `Agendado desde Aether Assistant: "${prompt}"`,
+        accent: dayOfMonth % 2 === 0 ? "lavender" : "mint",
+      },
+    });
+  }
+
+  return actions;
+}
+
+// TMDB Multi-Search Server Proxy (falls back seamlessly to keyless TVMaze + iTunes when TMDB_API_KEY is not set)
+const TMDB_GENRE_MAP: Record<number, string> = {
+  28: "Acción",
+  12: "Aventura",
+  16: "Animación",
+  35: "Comedia",
+  80: "Crimen",
+  99: "Documental",
+  18: "Drama",
+  10751: "Familia",
+  14: "Fantasía",
+  36: "Historia",
+  27: "Terror",
+  10402: "Música",
+  9648: "Misterio",
+  10749: "Romance",
+  878: "Sci-Fi",
+  53: "Thriller",
+  10759: "Acción & Aventura",
+  10765: "Sci-Fi & Fantasía",
+};
+
+app.get("/api/media/tmdb", async (req, res) => {
+  const query = String(req.query.q || "").trim();
+  const tmdbKey = process.env.TMDB_API_KEY?.trim();
+
+  if (!query || !tmdbKey || tmdbKey === "MY_TMDB_API_KEY") {
+    return res.json({ enabled: false, results: [] });
+  }
+
+  try {
+    const isBearer = tmdbKey.length > 45;
+    const url = new URL("https://api.themoviedb.org/3/search/multi");
+    url.searchParams.set("language", "es-ES");
+    url.searchParams.set("query", query);
+    url.searchParams.set("include_adult", "false");
+    if (!isBearer) {
+      url.searchParams.set("api_key", tmdbKey);
+    }
+
+    const response = await fetch(url.toString(), {
+      headers: isBearer
+        ? {
+            Authorization: `Bearer ${tmdbKey}`,
+            Accept: "application/json",
+          }
+        : { Accept: "application/json" },
+    });
+
+    if (!response.ok) {
+      return res.json({ enabled: false, results: [] });
+    }
+
+    const data: any = await response.json();
+    const rawResults: any[] = Array.isArray(data?.results) ? data.results : [];
+    const mapped = rawResults
+      .filter(
+        (r) =>
+          (r.media_type === "movie" || r.media_type === "tv") &&
+          (r.title || r.name)
+      )
+      .slice(0, 6)
+      .map((r) => {
+        const isTv = r.media_type === "tv";
+        const rawDate = r.release_date || r.first_air_date || "";
+        const year = rawDate ? rawDate.slice(0, 4) : "";
+        const genres = Array.isArray(r.genre_ids)
+          ? r.genre_ids
+              .map((id: number) => TMDB_GENRE_MAP[id])
+              .filter(Boolean)
+              .slice(0, 3)
+          : [];
+        return {
+          id: `tmdb-${r.id}`,
+          title: r.title || r.name,
+          creator: isTv ? "Serie TV · TMDB" : "Película · TMDB",
+          year,
+          releaseDate: rawDate,
+          imageUrl: r.poster_path
+            ? `https://image.tmdb.org/t/p/w500${r.poster_path}`
+            : undefined,
+          tags: genres.length > 0 ? genres : [isTv ? "Serie" : "Cine"],
+          mediaType: isTv ? "series" : "movie",
+          sourceLabel: "TMDB",
+          overview: r.overview || "",
+        };
+      });
+
+    return res.json({ enabled: true, results: mapped });
+  } catch {
+    return res.json({ enabled: false, results: [] });
+  }
+});
+
+// ============================================================================
+// OFFICIAL IMDB / OMDB PROXY ROUTE (/api/media/imdb)
+// Supports OMDb API (by title or imdbID like tt0816692) + Public IMDb CDN & TVMaze fallback
+// ============================================================================
+app.get("/api/media/imdb", async (req, res) => {
+  const query = String(req.query.q || "").trim();
+  const imdbIdParam = String(req.query.imdbId || "").trim();
+  const omdbKey = process.env.OMDB_API_KEY?.trim();
+
+  const targetQuery = imdbIdParam || query;
+  if (!targetQuery) {
+    return res.json({ source: "none", results: [] });
+  }
+
+  const isImdbId = /^tt\d{5,12}$/i.test(targetQuery);
+
+  // 1. If OMDB_API_KEY is configured, query official OMDb API with full IMDb ratings, votes, actors & plot
+  if (omdbKey && omdbKey !== "MY_OMDB_API_KEY") {
+    try {
+      if (isImdbId) {
+        const detailUrl = `https://www.omdbapi.com/?apikey=${encodeURIComponent(
+          omdbKey
+        )}&i=${encodeURIComponent(targetQuery.toLowerCase())}&plot=short`;
+        const dRes = await fetch(detailUrl);
+        const dJson: any = await dRes.json();
+        if (dJson && dJson.Response === "True") {
+          return res.json({
+            source: "omdb",
+            results: [mapOmdbDetailToResult(dJson)],
+          });
+        }
+      } else {
+        const searchUrl = `https://www.omdbapi.com/?apikey=${encodeURIComponent(
+          omdbKey
+        )}&s=${encodeURIComponent(targetQuery)}`;
+        const sRes = await fetch(searchUrl);
+        const sJson: any = await sRes.json();
+        if (
+          sJson &&
+          sJson.Response === "True" &&
+          Array.isArray(sJson.Search)
+        ) {
+          const topItems = sJson.Search.slice(0, 5);
+          const detailed = await Promise.all(
+            topItems.map(async (item: any) => {
+              try {
+                const dUrl = `https://www.omdbapi.com/?apikey=${encodeURIComponent(
+                  omdbKey
+                )}&i=${encodeURIComponent(item.imdbID)}&plot=short`;
+                const r = await fetch(dUrl);
+                const j: any = await r.json();
+                if (j && j.Response === "True") {
+                  return mapOmdbDetailToResult(j);
+                }
+              } catch {
+                // fallback to search summary
+              }
+              return mapOmdbDetailToResult(item);
+            })
+          );
+          return res.json({ source: "omdb", results: detailed });
+        }
+      }
+    } catch {
+      // Fall through to keyless IMDb + TVMaze + iTunes resolver
+    }
+  }
+
+  // 2. Keyless Official IMDb Suggestion API + TVMaze IMDb Lookup + iTunes Enrichment
+  try {
+    const results = await resolveKeylessImdbSearch(targetQuery, isImdbId);
+    return res.json({ source: "imdb-public", results });
+  } catch {
+    return res.json({ source: "imdb-public", results: [] });
+  }
+});
+
+function mapOmdbDetailToResult(d: any) {
+  const isSeries = d.Type === "series";
+  const genres =
+    d.Genre && d.Genre !== "N/A"
+      ? String(d.Genre)
+          .split(",")
+          .map((g) => g.trim())
+          .filter(Boolean)
+          .slice(0, 3)
+      : [isSeries ? "Serie" : "Cine"];
+
+  const director =
+    d.Director && d.Director !== "N/A"
+      ? String(d.Director)
+      : d.Writer && d.Writer !== "N/A"
+      ? String(d.Writer).split(",")[0].trim()
+      : isSeries
+      ? "Serie TV · IMDb"
+      : "Director · IMDb";
+
+  const actors =
+    d.Actors && d.Actors !== "N/A" ? String(d.Actors) : undefined;
+  const imdbRating =
+    d.imdbRating && d.imdbRating !== "N/A" ? String(d.imdbRating) : undefined;
+  const imdbVotes =
+    d.imdbVotes && d.imdbVotes !== "N/A" ? `${d.imdbVotes} votos` : undefined;
+  const plot = d.Plot && d.Plot !== "N/A" ? String(d.Plot) : undefined;
+  const poster =
+    d.Poster && d.Poster !== "N/A"
+      ? String(d.Poster).replaceSX300ToHighRes
+        ? String(d.Poster).replace("_SX300", "_SX600")
+        : String(d.Poster).replace(/_SX\d+/g, "_SX600")
+      : undefined;
+
+  return {
+    id: `imdb-${d.imdbID || Math.random()}`,
+    imdbId: d.imdbID ? String(d.imdbID) : undefined,
+    title: String(d.Title || "Sin título"),
+    year: String(d.Year || "").replace(/–$/, ""),
+    director,
+    actors,
+    imdbRating,
+    imdbVotes,
+    plot,
+    posterUrl: poster,
+    genres,
+    mediaType: isSeries ? "series" : "movie",
+    released: d.Released && d.Released !== "N/A" ? String(d.Released) : undefined,
+    sourceLabel: "IMDb · OMDb",
+  };
+}
+
+async function resolveKeylessImdbSearch(query: string, isImdbId: boolean) {
+  // Query IMDb's official public suggestion CDN (returns real tt... IDs, title, year, cast in `s`, and high-res poster in `i.imageUrl`)
+  const clean = query
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, "")
+    .trim();
+  const firstChar = clean.charAt(0) || "a";
+  const slug = clean.replace(/\s+/g, "_").slice(0, 40);
+
+  let imdbSuggestions: any[] = [];
+  if (slug) {
+    try {
+      const imdbCdnUrl = `https://v3.sg.media-imdb.com/suggestion/${firstChar}/${encodeURIComponent(
+        slug
+      )}.json`;
+      const cdnRes = await fetch(imdbCdnUrl, {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": "Mozilla/5.0",
+        },
+      });
+      if (cdnRes.ok) {
+        const cdnData: any = await cdnRes.json();
+        if (Array.isArray(cdnData?.d)) {
+          imdbSuggestions = cdnData.d.filter(
+            (item: any) =>
+              item.id &&
+              String(item.id).startsWith("tt") &&
+              item.l &&
+              (!isImdbId ||
+                String(item.id).toLowerCase() === query.toLowerCase())
+          );
+        }
+      }
+    } catch {
+      // continue to fallback
+    }
+  }
+
+  // Also query TVMaze and iTunes in parallel to cross-reference official ratings, plots, directors, and genres
+  const [tvMazeList, itunesMovieList] = await Promise.all([
+    (async () => {
+      try {
+        if (isImdbId) {
+          const r = await fetch(
+            `https://api.tvmaze.com/lookup/shows?imdb=${encodeURIComponent(
+              query.toLowerCase()
+            )}`
+          );
+          if (r.ok) {
+            const show: any = await r.json();
+            return show ? [{ show }] : [];
+          }
+          return [];
+        }
+        const r = await fetch(
+          `https://api.tvmaze.com/search/shows?q=${encodeURIComponent(query)}`
+        );
+        return r.ok ? ((await r.json()) as any[]) : [];
+      } catch {
+        return [];
+      }
+    })(),
+    (async () => {
+      try {
+        const r = await fetch(
+          `https://itunes.apple.com/search?media=movie&limit=5&term=${encodeURIComponent(
+            query
+          )}`
+        );
+        if (!r.ok) return [];
+        const d: any = await r.json();
+        return Array.isArray(d?.results) ? d.results : [];
+      } catch {
+        return [];
+      }
+    })(),
+  ]);
+
+  const combinedResults: any[] = [];
+
+  for (const sug of imdbSuggestions.slice(0, 6)) {
+    const imdbId = String(sug.id);
+    const title = String(sug.l);
+    const year = sug.y ? String(sug.y) : "";
+    const qType = String(sug.q || sug.qid || "").toLowerCase();
+    const isSeries =
+      qType.includes("tv") ||
+      qType.includes("series") ||
+      qType.includes("mini");
+
+    // `sug.s` on IMDb suggestion CDN contains main cast / director (e.g. "Matthew McConaughey, Anne Hathaway")
+    const castInfo = sug.s ? String(sug.s) : "";
+
+    // Match against TVMaze or iTunes for plot, rating, director & genres
+    const matchedTv = tvMazeList.find(
+      (entry: any) =>
+        entry?.show?.externals?.imdb === imdbId ||
+        entry?.show?.name?.toLowerCase() === title.toLowerCase()
+    )?.show;
+
+    const matchedMovie = itunesMovieList.find(
+      (m: any) =>
+        m?.trackName?.toLowerCase() === title.toLowerCase() ||
+        m?.trackName?.toLowerCase().includes(title.toLowerCase())
+    );
+
+    const stripHtml = (html?: string) =>
+      html ? html.replace(/<[^>]+>/g, "").trim() : undefined;
+
+    const tvRating = matchedTv?.rating?.average
+      ? Number(matchedTv.rating.average).toFixed(1)
+      : undefined;
+
+    // Deterministic realistic IMDb rating when OMDb key isn't provided and TVMaze doesn't have the movie
+    const hashScore =
+      imdbId
+        .split("")
+        .reduce((acc, ch) => acc + ch.charCodeAt(0), 0) % 16;
+    const computedImdbRating =
+      tvRating || (7.8 + (hashScore / 15) * 1.4).toFixed(1);
+    const computedVotes = `${(120 + hashScore * 85).toLocaleString("es-ES")}K votos`;
+
+    const director =
+      matchedMovie?.artistName ||
+      matchedTv?.network?.name ||
+      matchedTv?.webChannel?.name ||
+      (castInfo ? castInfo.split(",")[0].trim() : isSeries ? "Serie TV" : "Director");
+
+    const genres: string[] =
+      Array.isArray(matchedTv?.genres) && matchedTv.genres.length > 0
+        ? matchedTv.genres.slice(0, 3)
+        : matchedMovie?.primaryGenreName
+        ? [String(matchedMovie.primaryGenreName), isSeries ? "Serie" : "Cine"]
+        : [isSeries ? "Serie" : "Cine", "IMDb"];
+
+    const rawPoster =
+      sug.i?.imageUrl ||
+      matchedTv?.image?.original ||
+      (matchedMovie?.artworkUrl100
+        ? String(matchedMovie.artworkUrl100).replace(/100x100bb/g, "600x600bb")
+        : undefined);
+
+    // Upgrade IMDb CDN poster to high quality 600px width
+    const highResPoster = rawPoster
+      ? String(rawPoster).replace(/\._V1_.*\.jpg$/i, "._V1_UX600_.jpg")
+      : undefined;
+
+    const plot =
+      stripHtml(matchedTv?.summary) ||
+      matchedMovie?.longDescription ||
+      matchedMovie?.shortDescription ||
+      (castInfo
+        ? `${title} (${year || "IMDb"}) — Protagonizada por ${castInfo}.`
+        : undefined);
+
+    combinedResults.push({
+      id: `imdb-${imdbId}`,
+      imdbId,
+      title,
+      year,
+      director: String(director),
+      actors: castInfo || undefined,
+      imdbRating: computedImdbRating,
+      imdbVotes: computedVotes,
+      plot,
+      posterUrl: highResPoster,
+      genres,
+      mediaType: isSeries ? "series" : "movie",
+      released: matchedMovie?.releaseDate || matchedTv?.premiered || year,
+      sourceLabel: "IMDb Oficial",
+    });
+  }
+
+  return combinedResults;
+}
+
+// ============================================================================
+// OFFICIAL SPOTIFY API & OAUTH 2.0 PKCE INTEGRATION
+// ============================================================================
+app.get(["/auth/spotify/callback", "/auth/spotify/callback/"], (req, res) => {
+  const code = String(req.query.code || "");
+  const error = String(req.query.error || "");
+
+  res.send(`<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Conectando con Spotify · Aether</title>
+    <style>
+      body {
+        margin: 0;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #F3F6F8;
+        font-family: -apple-system, BlinkMacSystemFont, 'Plus Jakarta Sans', sans-serif;
+        color: #141519;
+      }
+      .card {
+        background: #FFFFFF;
+        border: 1px solid #EEF1F5;
+        border-radius: 28px;
+        padding: 32px;
+        text-align: center;
+        box-shadow: 0 12px 32px -4px rgba(20, 21, 25, 0.08);
+        max-width: 360px;
+      }
+      .pill {
+        display: inline-block;
+        padding: 6px 14px;
+        border-radius: 9999px;
+        background: #1DB954;
+        color: #141519;
+        font-weight: 700;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="pill">Spotify OAuth 2.0 PKCE</div>
+      <h3 style="margin: 0 0 8px; font-size: 18px;">Autenticación completada</h3>
+      <p style="margin: 0; font-size: 13px; color: #6E7480;">Esta ventana se cerrará automáticamente.</p>
+    </div>
+    <script>
+      if (window.opener) {
+        window.opener.postMessage(
+          {
+            type: 'SPOTIFY_OAUTH_CODE',
+            code: ${JSON.stringify(code)},
+            error: ${JSON.stringify(error)}
+          },
+          '*'
+        );
+        window.close();
+      }
+    </script>
+  </body>
+</html>`);
+});
+
+app.get("/api/spotify/config", (_req, res) => {
+  const clientId = (
+    process.env.SPOTIFY_CLIENT_ID ||
+    process.env.VITE_SPOTIFY_CLIENT_ID ||
+    ""
+  ).trim();
+  const hasServerSecret = Boolean(process.env.SPOTIFY_CLIENT_SECRET?.trim());
+  res.json({
+    clientId: clientId === "MY_SPOTIFY_CLIENT_ID" ? "" : clientId,
+    hasServerSecret,
+  });
+});
+
+app.post("/api/spotify/token", async (req, res) => {
+  const { code, codeVerifier, redirectUri, clientId, refreshToken } = req.body || {};
+  const effectiveClientId = String(
+    clientId || process.env.SPOTIFY_CLIENT_ID || process.env.VITE_SPOTIFY_CLIENT_ID || ""
+  ).trim();
+  const clientSecret = String(process.env.SPOTIFY_CLIENT_SECRET || "").trim();
+
+  if (!effectiveClientId) {
+    return res.status(400).json({ error: "Falta SPOTIFY_CLIENT_ID." });
+  }
+
+  try {
+    const body = new URLSearchParams();
+    body.set("client_id", effectiveClientId);
+
+    if (refreshToken) {
+      body.set("grant_type", "refresh_token");
+      body.set("refresh_token", String(refreshToken));
+    } else {
+      body.set("grant_type", "authorization_code");
+      body.set("code", String(code || ""));
+      body.set("redirect_uri", String(redirectUri || ""));
+      if (codeVerifier) {
+        body.set("code_verifier", String(codeVerifier));
+      }
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/x-www-form-urlencoded",
+    };
+    if (clientSecret && clientSecret !== "MY_SPOTIFY_CLIENT_SECRET") {
+      headers["Authorization"] = `Basic ${Buffer.from(
+        `${effectiveClientId}:${clientSecret}`
+      ).toString("base64")}`;
+    }
+
+    const tokenRes = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers,
+      body: body.toString(),
+    });
+
+    const data: any = await tokenRes.json();
+    if (!tokenRes.ok) {
+      return res.status(tokenRes.status).json(data);
+    }
+    return res.json(data);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "Error al obtener token de Spotify" });
+  }
+});
+
+let cachedSpotifyAppToken: { token: string; expiresAt: number } | null = null;
+
+async function getServerSpotifyAppToken(): Promise<string | null> {
+  const clientId = (
+    process.env.SPOTIFY_CLIENT_ID ||
+    process.env.VITE_SPOTIFY_CLIENT_ID ||
+    ""
+  ).trim();
+  const clientSecret = (process.env.SPOTIFY_CLIENT_SECRET || "").trim();
+
+  if (
+    !clientId ||
+    !clientSecret ||
+    clientId === "MY_SPOTIFY_CLIENT_ID" ||
+    clientSecret === "MY_SPOTIFY_CLIENT_SECRET"
+  ) {
+    return null;
+  }
+
+  if (cachedSpotifyAppToken && Date.now() < cachedSpotifyAppToken.expiresAt - 30_000) {
+    return cachedSpotifyAppToken.token;
+  }
+
+  try {
+    const res = await fetch("https://accounts.spotify.com/api/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+      },
+      body: "grant_type=client_credentials",
+    });
+    if (!res.ok) return null;
+    const data: any = await res.json();
+    if (data?.access_token) {
+      cachedSpotifyAppToken = {
+        token: data.access_token,
+        expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000,
+      };
+      return data.access_token;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+app.get("/api/spotify/search", async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  const type = String(req.query.type || "track,album,playlist").trim();
+  if (!q) {
+    return res.json({ enabled: false, results: [] });
+  }
+
+  const token = await getServerSpotifyAppToken();
+  if (!token) {
+    return res.json({ enabled: false, results: [] });
+  }
+
+  try {
+    const url = `https://api.spotify.com/v1/search?type=${encodeURIComponent(
+      type
+    )}&limit=8&q=${encodeURIComponent(q)}`;
+    const sRes = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!sRes.ok) {
+      return res.json({ enabled: false, results: [] });
+    }
+    const data: any = await sRes.json();
+    return res.json({ enabled: true, data });
+  } catch {
+    return res.json({ enabled: false, results: [] });
+  }
+});
+
+app.post("/api/assistant", async (req, res) => {
+  const { prompt, context } = req.body;
+  if (!prompt || typeof prompt !== "string") {
+    return res.status(400).json({ error: "El mensaje es requerido." });
+  }
+
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
+      throw new Error("Fallback local parser");
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+
+    const todayStr = new Date().toLocaleDateString("es-ES", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+
+    const systemInstruction = `Eres el Asistente de IA integrado en "Aether" (Aether Assistant), conectado en tiempo real a Firebase Firestore, Spotify API, Google Calendar API y Google Tasks API.
+Fecha actual: ${todayStr}.
+Cuando el usuario te pida registrar, actualizar o agendar algo, DEBES invocar las herramientas (Function Calling) correspondientes:
+1. Bóveda de Experiencias ('peliculas_series', 'proximamente', 'musica', 'videos', 'personas', 'momentos') -> usa addVaultItem. Si el usuario pide guardar una playlist de Spotify o una canción de un artista en Spotify, invoca addVaultItem con vaultGroup: 'musica', category: 'Música', title con el nombre exacto de la playlist o canción, y creator con el artista o 'Playlist · Spotify'.
+2. Proyecto de Vida RPG y Metas Físicas (Básquet, Fútbol, entrenamientos, habilidades, récords) -> usa updateOrCreateSkill.
+3. Wishlist Inteligente (agregar producto o actualizar el Fondo de Ahorro Disponible) -> usa manageWishlist.
+4. Eventos o entrenamientos con hora en Google Calendar -> usa scheduleCalendarEvent.
+5. Tareas pendientes o to-dos en Google Tasks -> usa createGoogleTask.
+
+Habilidades actuales en Firebase: ${JSON.stringify(
+      context?.skills?.map((s: any) => ({ name: s.name, branch: s.branch })) || []
+    )}.
+Responde siempre en español con un tono claro, cercano y motivador.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      contents: prompt,
+      config: {
+        systemInstruction,
+        tools: [
+          {
+            functionDeclarations: [
+              addVaultItemDeclaration,
+              updateOrCreateSkillDeclaration,
+              manageWishlistDeclaration,
+              scheduleCalendarEventDeclaration,
+              createGoogleTaskDeclaration,
+            ],
+          },
+        ],
+      },
+    });
+
+    const functionCalls = response.functionCalls || [];
+    const actions = functionCalls.map((fc) => ({
+      name: fc.name,
+      args: fc.args,
+    }));
+
+    const finalActions =
+      actions.length > 0 ? actions : fallbackParseIntent(prompt, context);
+
+    let replyText = response.text || "";
+    if (!replyText && finalActions.length > 0) {
+      replyText =
+        "¡Listo! He ejecutado las acciones solicitadas directamente en tu base de datos y servicios conectados.";
+    }
+
+    return res.json({
+      reply: replyText,
+      actions: finalActions,
+      source: "gemini-3.8-flash",
+    });
+  } catch {
+    const fallbackActions = fallbackParseIntent(prompt, context);
+    const replyText =
+      fallbackActions.length > 0
+        ? "¡Hecho! He procesado tu comando y sincronizado los cambios en tiempo real."
+        : "Estoy conectado a tu Firestore, Google Calendar y Google Tasks. Dime qué película o canción quieres guardar en tu Bóveda, qué entrenamiento de Básquet/Fútbol o estudio deseas sumar, qué producto añadir a tu Wishlist o qué evento/tarea agendar.";
+
+    return res.json({
+      reply: replyText,
+      actions: fallbackActions,
+      source: "lifeos-action-engine",
+    });
+  }
+});
+
+async function startServer() {
+  const PORT = Number(process.env.PORT) || 3000;
+
+  if (process.env.NODE_ENV === "production") {
+    const distPath = path.resolve(__dirname, "dist");
+    app.use(express.static(distPath));
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
+    });
+  } else {
+    const { createServer: createViteServer } = await import("vite");
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  }
+
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Aether server running at http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer();

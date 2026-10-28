@@ -1,0 +1,481 @@
+{
+  "entities": {
+    "VaultItem": {
+      "title": "VaultItem",
+      "description": "Experience, movie, series, upcoming release, music album, video, person, or life moment stored in the user's Bóveda.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the authenticated owner.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Title or name of the experience/person.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "creator": {
+          "type": "string",
+          "description": "Creator, director, artist, channel, or relationship role.",
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "description": "Display category label.",
+          "maxLength": 60
+        },
+        "vaultGroup": {
+          "type": "string",
+          "description": "Internal filter group in Bóveda.",
+          "enum": [
+            "peliculas_series",
+            "proximamente",
+            "musica",
+            "videos",
+            "personas",
+            "momentos"
+          ]
+        },
+        "rating": {
+          "type": "number",
+          "description": "Score from 1 to 10."
+        },
+        "tier": {
+          "type": "string",
+          "description": "Classification tier.",
+          "enum": ["S", "A", "B"]
+        },
+        "consumedDate": {
+          "type": "string",
+          "description": "Date label when experienced.",
+          "maxLength": 60
+        },
+        "tags": {
+          "type": "array",
+          "description": "Up to 10 genre, mood, or context tags."
+        },
+        "review": {
+          "type": "string",
+          "description": "Personal review or notes.",
+          "maxLength": 1500
+        },
+        "accent": {
+          "type": "string",
+          "description": "Pastel card accent.",
+          "enum": ["mint", "lavender"]
+        },
+        "artVariant": {
+          "type": "string",
+          "description": "Artwork style key.",
+          "maxLength": 40
+        },
+        "isFeaturedMasterpiece": {
+          "type": "boolean",
+          "description": "Whether highlighted in Destacados del Mes."
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Official poster, album cover, or video thumbnail URL.",
+          "maxLength": 1000
+        },
+        "audioPreviewUrl": {
+          "type": "string",
+          "description": "30-second audio preview URL from iTunes.",
+          "maxLength": 1000
+        },
+        "releaseYear": {
+          "type": "string",
+          "description": "Release year string.",
+          "maxLength": 20
+        },
+        "imdbId": {
+          "type": "string",
+          "description": "Official IMDb ID (e.g. tt0816692).",
+          "maxLength": 30
+        },
+        "imdbRating": {
+          "type": "string",
+          "description": "Official IMDb rating (e.g. 8.7).",
+          "maxLength": 20
+        },
+        "imdbVotes": {
+          "type": "string",
+          "description": "Formatted IMDb vote count.",
+          "maxLength": 40
+        },
+        "actors": {
+          "type": "string",
+          "description": "Main cast / actors from IMDb.",
+          "maxLength": 400
+        },
+        "plot": {
+          "type": "string",
+          "description": "Official synopsis from IMDb / OMDb.",
+          "maxLength": 1500
+        },
+        "releaseDate": {
+          "type": "string",
+          "description": "Release date for upcoming items.",
+          "maxLength": 60
+        },
+        "daysRemaining": {
+          "type": "number",
+          "description": "Countdown days for upcoming items."
+        },
+        "hypeLevel": {
+          "type": "number",
+          "description": "Hype percentage (0-100)."
+        },
+        "releaseFormat": {
+          "type": "string",
+          "description": "Season or movie format label.",
+          "maxLength": 100
+        },
+        "duration": {
+          "type": "string",
+          "description": "Video duration string.",
+          "maxLength": 30
+        },
+        "videoUrl": {
+          "type": "string",
+          "description": "External video URL.",
+          "maxLength": 500
+        },
+        "keyTakeaway": {
+          "type": "string",
+          "description": "Key idea learned from a video.",
+          "maxLength": 600
+        },
+        "relationshipTag": {
+          "type": "string",
+          "description": "Relationship label for people entries.",
+          "maxLength": 40
+        },
+        "personMeta": {
+          "type": "string",
+          "description": "Birthday or key fact for a person.",
+          "maxLength": 200
+        },
+        "personInitials": {
+          "type": "string",
+          "description": "Avatar initials.",
+          "maxLength": 6
+        },
+        "location": {
+          "type": "string",
+          "description": "Location for special life moments.",
+          "maxLength": 150
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO creation timestamp.",
+          "maxLength": 60
+        }
+      },
+      "required": [
+        "userId",
+        "title",
+        "creator",
+        "category",
+        "vaultGroup",
+        "rating",
+        "tier",
+        "consumedDate",
+        "tags",
+        "review",
+        "accent",
+        "artVariant",
+        "createdAt"
+      ]
+    },
+    "SkillRpg": {
+      "title": "SkillRpg",
+      "description": "Intellectual skill or physical/sports goal (Basketball, Football, Fitness) in the RPG Skill Tree.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the authenticated owner.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Skill or sports goal title.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "description": "Discipline category.",
+          "maxLength": 100
+        },
+        "branch": {
+          "type": "string",
+          "description": "RPG branch.",
+          "enum": ["learning", "sports"]
+        },
+        "unitLabel": {
+          "type": "string",
+          "description": "Unit of practice.",
+          "enum": ["h", "Entrenamientos"]
+        },
+        "sportStats": {
+          "type": "string",
+          "description": "Optional sports metrics (games, goals, shooting %).",
+          "maxLength": 200
+        },
+        "level": {
+          "type": "number",
+          "description": "Current RPG level."
+        },
+        "progress": {
+          "type": "number",
+          "description": "XP progress percentage (0-100)."
+        },
+        "hoursInvested": {
+          "type": "number",
+          "description": "Total hours or trainings accumulated."
+        },
+        "weeklyTargetHours": {
+          "type": "number",
+          "description": "Weekly target."
+        },
+        "accent": {
+          "type": "string",
+          "description": "Pastel gradient accent.",
+          "enum": ["mint", "lavender"]
+        },
+        "iconName": {
+          "type": "string",
+          "description": "Lucide icon identifier.",
+          "maxLength": 40
+        },
+        "tags": {
+          "type": "array",
+          "description": "Sub-skill tags."
+        },
+        "milestones": {
+          "type": "array",
+          "description": "Personal records and milestones list."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO creation timestamp.",
+          "maxLength": 60
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "category",
+        "branch",
+        "unitLabel",
+        "level",
+        "progress",
+        "hoursInvested",
+        "weeklyTargetHours",
+        "accent",
+        "iconName",
+        "tags",
+        "milestones",
+        "createdAt"
+      ]
+    },
+    "WishlistItem": {
+      "title": "WishlistItem",
+      "description": "Material goal or product in the Smart Wishlist.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the authenticated owner.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Product name.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "category": {
+          "type": "string",
+          "description": "Category label.",
+          "maxLength": 100
+        },
+        "wishlistTag": {
+          "type": "string",
+          "description": "Filter tag.",
+          "enum": [
+            "Tech",
+            "Deporte / Básquet & Fútbol",
+            "Setup",
+            "Caprichos"
+          ]
+        },
+        "estimatedPrice": {
+          "type": "number",
+          "description": "Target price in USD."
+        },
+        "savedAmount": {
+          "type": "number",
+          "description": "Amount saved directly toward this item."
+        },
+        "priority": {
+          "type": "string",
+          "description": "Purchase priority.",
+          "enum": ["Alta", "Media", "Capricho"]
+        },
+        "purchased": {
+          "type": "boolean",
+          "description": "Whether already bought."
+        },
+        "link": {
+          "type": "string",
+          "description": "Store URL.",
+          "maxLength": 500
+        },
+        "notes": {
+          "type": "string",
+          "description": "Specifications or purchase reason.",
+          "maxLength": 1000
+        },
+        "accent": {
+          "type": "string",
+          "description": "Pastel card accent.",
+          "enum": ["mint", "lavender"]
+        },
+        "artVariant": {
+          "type": "string",
+          "description": "Visual artwork key.",
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO creation timestamp.",
+          "maxLength": 60
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "category",
+        "wishlistTag",
+        "estimatedPrice",
+        "savedAmount",
+        "priority",
+        "purchased",
+        "link",
+        "notes",
+        "accent",
+        "artVariant",
+        "createdAt"
+      ]
+    },
+    "WishlistSettings": {
+      "title": "WishlistSettings",
+      "description": "User-level configuration for available savings liquidity pool.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the authenticated owner.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "extraSavingsPool": {
+          "type": "number",
+          "description": "Unassigned available savings pool in USD."
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO update timestamp.",
+          "maxLength": 60
+        }
+      },
+      "required": ["userId", "extraSavingsPool", "updatedAt"]
+    },
+    "DailyHours": {
+      "title": "DailyHours",
+      "description": "Daily dedication hours record for the Pill Bar Chart.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the authenticated owner.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "dayShort": {
+          "type": "string",
+          "description": "Short weekday label (Lu, Ma, Mi...).",
+          "maxLength": 20
+        },
+        "dayLabel": {
+          "type": "string",
+          "description": "Full date label.",
+          "maxLength": 60
+        },
+        "dateNum": {
+          "type": "number",
+          "description": "Day of the month."
+        },
+        "dateKey": {
+          "type": "string",
+          "description": "YYYY-MM-DD key.",
+          "maxLength": 20
+        },
+        "hours": {
+          "type": "number",
+          "description": "Total hours logged on this date."
+        },
+        "focusTopic": {
+          "type": "string",
+          "description": "Main focus topic of the day.",
+          "maxLength": 200
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO update timestamp.",
+          "maxLength": 60
+        }
+      },
+      "required": [
+        "userId",
+        "dayShort",
+        "dayLabel",
+        "dateNum",
+        "dateKey",
+        "hours",
+        "focusTopic",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/vault_items/{itemId}": {
+      "schema": { "$ref": "#/entities/VaultItem" },
+      "description": "User's personal vault items (movies, series, upcoming hype radar, music, videos, people, moments)."
+    },
+    "/skills_rpg/{skillId}": {
+      "schema": { "$ref": "#/entities/SkillRpg" },
+      "description": "User's RPG skills, intellectual learnings, and physical/sports goals (Basketball, Football, Conditioning)."
+    },
+    "/wishlist_items/{itemId}": {
+      "schema": { "$ref": "#/entities/WishlistItem" },
+      "description": "User's smart wishlist products and savings progress."
+    },
+    "/wishlist_settings/{userId}": {
+      "schema": { "$ref": "#/entities/WishlistSettings" },
+      "description": "User's available savings pool configuration document."
+    },
+    "/daily_hours/{dayId}": {
+      "schema": { "$ref": "#/entities/DailyHours" },
+      "description": "User's daily dedication hours for the Pill Bar Chart."
+    }
+  }
+}

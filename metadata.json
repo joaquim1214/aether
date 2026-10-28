@@ -1,0 +1,10 @@
+{
+  "name": "Life OS — Personal Bento Workspace",
+  "description": "Sistema operativo personal interactivo con estética Soft Bento Pastel & Charcoal UI para gestionar Bóveda de Experiencias, Árbol de Habilidades RPG, Wishlist Inteligente, Calendario y Asistente de IA con Gemini.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

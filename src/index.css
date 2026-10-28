@@ -1,0 +1,260 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Plus Jakarta Sans', 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-display: 'Outfit', 'Plus Jakarta Sans', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #EBF0F5;
+    color: #141519;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  h1, h2, h3, .font-display {
+    font-family: var(--font-display);
+  }
+}
+
+/* Soft Bento Pastel & Charcoal UI Custom Classes */
+.bg-mint-gradient {
+  background: linear-gradient(135deg, #98E2DE 0%, #CDF4F2 50%, #A2E5E1 100%);
+}
+
+.bg-lavender-gradient {
+  background: linear-gradient(135deg, #AEBDF6 0%, #DAE2FC 50%, #B5C2F7 100%);
+}
+
+.bg-soft-mesh-header {
+  background: radial-gradient(circle at 12% 20%, rgba(168, 230, 227, 0.28) 0%, transparent 45%),
+              radial-gradient(circle at 88% 30%, rgba(187, 198, 248, 0.28) 0%, transparent 50%),
+              #FFFFFF;
+}
+
+.inner-card-stroke {
+  border: 2px solid rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.8), 0 4px 20px -4px rgba(19, 25, 39, 0.04);
+}
+
+.bg-striped-pattern {
+  background-color: #F4F6F9;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.65),
+    rgba(255, 255, 255, 0.65) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.bg-striped-subtle {
+  background-color: #F7F9FB;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(20, 21, 25, 0.035),
+    rgba(20, 21, 25, 0.035) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+.shadow-bento {
+  box-shadow: 0 4px 20px -4px rgba(19, 25, 39, 0.035);
+}
+
+.shadow-floating-dock {
+  box-shadow: 0 12px 32px -4px rgba(20, 21, 25, 0.25);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+   MODO OSCURO (SOFT BENTO CHARCOAL DARK MODE)
+============================================================================ */
+.theme-dark {
+  background-color: #0D0E12 !important;
+  color: #F3F6F8 !important;
+}
+
+.theme-dark .app-canvas-container {
+  background-color: #141519 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.theme-dark .bg-white:not(.keep-white),
+.theme-dark .bg-\[\#FFFFFF\]:not(.keep-white) {
+  background-color: #1E2028 !important;
+  color: #F3F6F8 !important;
+}
+
+.theme-dark .bg-\[\#F7F9FB\] {
+  background-color: #262934 !important;
+}
+
+.theme-dark .bg-\[\#F3F6F8\]\/60 {
+  background-color: #16181F !important;
+}
+
+.theme-dark .bg-soft-mesh-header {
+  background: radial-gradient(circle at 12% 20%, rgba(168, 230, 227, 0.16) 0%, transparent 45%),
+              radial-gradient(circle at 88% 30%, rgba(187, 198, 248, 0.16) 0%, transparent 50%),
+              #1E2028 !important;
+}
+
+.theme-dark .border-\[\#EEF1F5\] {
+  border-color: #2E3240 !important;
+}
+
+.theme-dark .text-\[\#141519\]:not(.keep-dark-text) {
+  color: #F3F6F8 !important;
+}
+
+.theme-dark .text-\[\#6E7480\],
+.theme-dark .text-\[\#7A808C\] {
+  color: #9FA6B5 !important;
+}
+
+.theme-dark .bg-striped-pattern {
+  background-color: #232630 !important;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0.05) 4px,
+    transparent 4px,
+    transparent 8px
+  ) !important;
+}
+
+.theme-dark .bg-striped-subtle {
+  background-color: #1A1C24 !important;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.04),
+    rgba(255, 255, 255, 0.04) 4px,
+    transparent 4px,
+    transparent 8px
+  ) !important;
+}
+
+/* Keep pastel feature cards and timeline pills with dark charcoal text in dark mode */
+.theme-dark .bg-mint-gradient .text-\[\#141519\],
+.theme-dark .bg-lavender-gradient .text-\[\#141519\],
+.theme-dark .bg-\[\#A8E6E3\] .text-\[\#141519\],
+.theme-dark .bg-\[\#BBC6F8\] .text-\[\#141519\],
+.theme-dark .bg-\[\#CAE9F5\].text-\[\#141519\],
+.theme-dark .bg-\[\#CAE9F5\] .text-\[\#141519\] {
+  color: #141519 !important;
+}
+
+.theme-dark .bg-mint-gradient .bg-white,
+.theme-dark .bg-lavender-gradient .bg-white {
+  background-color: #FFFFFF !important;
+  color: #141519 !important;
+}
+
+/* Custom subtle scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(142, 149, 162, 0.3);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(142, 149, 162, 0.5);
+}
+
+/* ============================================================================
+   ANIMACIÓN SUTIL DE ONDAS DE FRECUENCIA (REPRODUCTOR 30S)
+============================================================================ */
+@keyframes aether-freq-wave-1 {
+  0%, 100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes aether-freq-wave-2 {
+  0%, 100% {
+    transform: scaleY(0.95);
+  }
+  40% {
+    transform: scaleY(0.3);
+  }
+  80% {
+    transform: scaleY(0.85);
+  }
+}
+
+@keyframes aether-freq-wave-3 {
+  0%, 100% {
+    transform: scaleY(0.45);
+  }
+  35% {
+    transform: scaleY(1);
+  }
+  70% {
+    transform: scaleY(0.35);
+  }
+}
+
+@keyframes aether-freq-wave-4 {
+  0%, 100% {
+    transform: scaleY(0.8);
+  }
+  55% {
+    transform: scaleY(0.3);
+  }
+}
+
+.freq-bar {
+  transform-origin: center;
+  will-change: transform;
+}
+
+.freq-bar-1 {
+  animation: aether-freq-wave-1 0.85s ease-in-out infinite;
+}
+
+.freq-bar-2 {
+  animation: aether-freq-wave-2 0.75s ease-in-out infinite 0.12s;
+}
+
+.freq-bar-3 {
+  animation: aether-freq-wave-3 0.9s ease-in-out infinite 0.24s;
+}
+
+.freq-bar-4 {
+  animation: aether-freq-wave-4 0.8s ease-in-out infinite 0.08s;
+}
+
+@keyframes aether-tab-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-vault-tab-fade {
+  animation: aether-tab-fade 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+
