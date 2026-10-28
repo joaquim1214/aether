@@ -17,6 +17,7 @@ import {
   LogOut,
   Moon,
   MoreHorizontal,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -92,6 +93,7 @@ import {
   subscribeWishlistItems,
   subscribeWishlistSettings,
   updateSkillRpgDoc,
+  updateVaultItemDoc,
   updateWishlistItemDoc,
   upsertDailyHoursDoc,
 } from './services/firebase';
@@ -105,7 +107,11 @@ import {
   fetchGoogleTasks,
   updateGoogleTaskStatus,
 } from './services/googleWorkspace';
-import { findBestMediaMatch } from './services/mediaSearchService';
+import {
+  computeReleaseCountdown,
+  findBestMediaMatch,
+  getAccurateHypeCountdown,
+} from './services/mediaSearchService';
 import {
   completeSpotifyPkceHandshake,
   disconnectSpotify,
@@ -184,6 +190,9 @@ export default function App() {
   const [createModalMode, setCreateModalMode] = useState<
     'vault' | 'skill' | 'wishlist' | 'schedule' | null
   >(null);
+  const [editingVaultItem, setEditingVaultItem] = useState<VaultItem | null>(
+    null
+  );
   const [defaultVaultGroup, setDefaultVaultGroup] = useState<
     Exclude<VaultFilterId, 'todo'>
   >('peliculas_series');
@@ -719,7 +728,13 @@ export default function App() {
     );
   };
 
-  // Manual Creation Handlers (Modals)
+  // Manual Creation & Editing Handlers (Modals)
+  const handleOpenEditVault = (item: VaultItem) => {
+    setEditingVaultItem(item);
+    setDefaultVaultGroup(item.vaultGroup);
+    setCreateModalMode('vault');
+  };
+
   const handleCreateVault = async (newItem: Omit<VaultItem, 'id'>) => {
     if (authUser) {
       await createVaultItemDoc(authUser.uid, newItem);
@@ -727,10 +742,29 @@ export default function App() {
       const created: VaultItem = { ...newItem, id: `vault-${Date.now()}` };
       setVault((prev) => [created, ...prev]);
     }
+    setEditingVaultItem(null);
     showNotification(`"${newItem.title}" guardado en tu Bóveda`);
     pushActivityAlert(
       `Nuevo registro en Bóveda: ${newItem.title}`,
       `${newItem.category} · ${newItem.rating}/10 (Tier ${newItem.tier}).`,
+      'vault',
+      'vault'
+    );
+  };
+
+  const handleUpdateVault = async (updatedItem: VaultItem) => {
+    if (authUser) {
+      await updateVaultItemDoc(authUser.uid, updatedItem.id, updatedItem);
+    } else {
+      setVault((prev) =>
+        prev.map((item) => (item.id === updatedItem.id ? updatedItem : item))
+      );
+    }
+    setEditingVaultItem(null);
+    showNotification(`Cambios actualizados en "${updatedItem.title}"`);
+    pushActivityAlert(
+      `Registro actualizado en Bóveda: ${updatedItem.title}`,
+      `${updatedItem.category} · ${updatedItem.rating}/10 (Tier ${updatedItem.tier}).`,
       'vault',
       'vault'
     );
@@ -1021,6 +1055,15 @@ export default function App() {
             mediaMatch?.plot ||
             'Registrado conversando con Aether Assistant.';
 
+      const upcomingCalc =
+        vaultGroup === 'proximamente'
+          ? computeReleaseCountdown(
+              args.releaseDate
+                ? String(args.releaseDate)
+                : mediaMatch?.rawReleaseDate || mediaMatch?.releaseDate
+            )
+          : null;
+
       const payload: Omit<VaultItem, 'id'> = {
         title: mediaMatch?.title || rawTitle,
         creator: finalCreator,
@@ -1057,23 +1100,27 @@ export default function App() {
         imdbVotes: mediaMatch?.imdbVotes,
         actors: mediaMatch?.actors,
         plot: mediaMatch?.plot,
-        releaseDate: args.releaseDate
-          ? String(args.releaseDate)
-          : vaultGroup === 'proximamente'
-          ? mediaMatch?.releaseDate
-          : undefined,
+        releaseDate:
+          vaultGroup === 'proximamente'
+            ? upcomingCalc?.formattedDate
+            : undefined,
         daysRemaining:
           vaultGroup === 'proximamente'
-            ? mediaMatch?.daysRemaining || 15
+            ? upcomingCalc?.daysRemaining ?? 15
             : undefined,
         releaseFormat:
           vaultGroup === 'proximamente'
-            ? mediaMatch?.releaseFormat
+            ? mediaMatch?.releaseFormat || 'Cine / Streaming'
             : undefined,
         videoUrl: mediaMatch?.videoUrl,
-        hypeLevel: args.hypeLevel ? Number(args.hypeLevel) : undefined,
+        hypeLevel:
+          vaultGroup === 'proximamente'
+            ? Math.min(100, Math.max(0, Number(args.hypeLevel) || 95))
+            : args.hypeLevel
+            ? Number(args.hypeLevel)
+            : undefined,
         keyTakeaway: args.keyTakeaway ? String(args.keyTakeaway) : undefined,
-        isFeaturedMasterpiece: tier === 'S',
+        isFeaturedMasterpiece: vaultGroup !== 'proximamente' && tier === 'S',
       };
 
       await handleCreateVault(payload);
@@ -1905,7 +1952,10 @@ export default function App() {
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
-                        onClick={() => setCreateModalMode('vault')}
+                        onClick={() => {
+                          setEditingVaultItem(null);
+                          setCreateModalMode('vault');
+                        }}
                         title="Registrar obra en Bóveda"
                         className="w-8 h-8 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[#141519] flex items-center justify-center transition-colors cursor-pointer"
                       >
@@ -1940,57 +1990,131 @@ export default function App() {
                       title="Tu Bóveda está lista"
                       description="Registra tu primera película, serie, canción o persona en Firebase."
                       actionLabel="+ Agregar a Bóveda"
-                      onAction={() => setCreateModalMode('vault')}
+                      onAction={() => {
+                        setEditingVaultItem(null);
+                        setCreateModalMode('vault');
+                      }}
                       compact
                     />
                   ) : (
                     <div className="space-y-2.5">
                       {filteredVaultRecents.map((item, idx) => {
                         const isMintDot = idx % 2 === 0;
+                        const isUpcoming = item.vaultGroup === 'proximamente';
+                        const countdownInfo = isUpcoming
+                          ? getAccurateHypeCountdown(
+                              item.releaseDate,
+                              item.daysRemaining
+                            )
+                          : null;
+                        const hypePct = Math.min(
+                          100,
+                          Math.max(0, Number(item.hypeLevel ?? 95))
+                        );
+
                         return (
                           <div
                             key={item.id}
                             onClick={() => setActiveTab('vault')}
-                            className="p-2.5 rounded-[16px] hover:bg-[#F7F9FB] border border-transparent hover:border-[#EEF1F5] flex items-center justify-between gap-2.5 cursor-pointer transition-all"
+                            className={`p-2.5 rounded-[16px] hover:bg-[#F7F9FB] border transition-all cursor-pointer ${
+                              isUpcoming
+                                ? 'bg-[#F7F9FB]/75 border-[#EEF1F5] flex flex-col gap-2'
+                                : 'border-transparent hover:border-[#EEF1F5] flex items-center justify-between gap-2.5'
+                            }`}
                           >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-10 h-10 rounded-[12px] overflow-hidden shrink-0 border border-[#EEF1F5]">
-                                <VisualArtwork
-                                  variant={item.artVariant}
-                                  accent={item.accent}
-                                  imageUrl={item.imageUrl}
-                                  alt={item.title}
-                                />
-                              </div>
-                              <div className="min-w-0">
-                                <h3 className="text-[0.84rem] font-bold text-[#141519] truncate">
-                                  {item.title}
-                                </h3>
-                                <div className="flex items-center gap-1.5 text-[0.72rem] font-medium text-[#6E7480] mt-0.5">
-                                  <span
-                                    className={`w-2 h-2 rounded-full shrink-0 ${
-                                      isMintDot
-                                        ? 'bg-[#6CD4CE]'
-                                        : 'bg-[#9BA9F0]'
-                                    }`}
+                            <div className="flex items-center justify-between gap-2.5">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div
+                                  className={`${
+                                    isUpcoming ? 'w-10 h-13' : 'w-10 h-10'
+                                  } rounded-[12px] overflow-hidden shrink-0 border border-[#EEF1F5] bg-[#FFFFFF]`}
+                                >
+                                  <VisualArtwork
+                                    variant={item.artVariant}
+                                    accent={item.accent}
+                                    imageUrl={item.imageUrl}
+                                    alt={item.title}
                                   />
-                                  <span className="truncate">
-                                    {item.category} · Tier {item.tier}
-                                  </span>
                                 </div>
+                                <div className="min-w-0">
+                                  <h3 className="text-[0.84rem] font-bold text-[#141519] truncate">
+                                    {item.title}
+                                  </h3>
+                                  <div className="flex items-center gap-1.5 text-[0.72rem] font-medium text-[#6E7480] mt-0.5">
+                                    <span
+                                      className={`w-2 h-2 rounded-full shrink-0 ${
+                                        isUpcoming
+                                          ? 'bg-[#9BA9F0]'
+                                          : isMintDot
+                                          ? 'bg-[#6CD4CE]'
+                                          : 'bg-[#9BA9F0]'
+                                      }`}
+                                    />
+                                    <span className="truncate">
+                                      {isUpcoming
+                                        ? `Estreno: ${countdownInfo?.formattedDate}`
+                                        : `${item.category} · Tier ${item.tier}`}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1 shrink-0">
+                                {isUpcoming ? (
+                                  <span
+                                    className={`px-2.5 py-1 rounded-full text-[0.68rem] font-bold tabular-nums whitespace-nowrap ${
+                                      idx % 2 === 0
+                                        ? 'bg-[#BBC6F8] text-[#141519] keep-dark-text'
+                                        : 'bg-[#141519] text-white'
+                                    }`}
+                                  >
+                                    {countdownInfo?.isFuture
+                                      ? `Faltan ${countdownInfo.daysRemaining}d`
+                                      : 'Ya estrenada'}
+                                  </span>
+                                ) : (
+                                  <>
+                                    {item.imdbRating && (
+                                      <span className="px-2 py-0.5 rounded-full bg-[#F5C518] text-[#141519] keep-dark-text text-[0.65rem] font-extrabold tabular-nums">
+                                        IMDb {item.imdbRating}
+                                      </span>
+                                    )}
+                                    <span className="px-2.5 py-1 rounded-full bg-[#141519] text-white text-[0.72rem] font-bold tabular-nums">
+                                      {item.rating.toFixed(1)} ★
+                                    </span>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenEditVault(item);
+                                  }}
+                                  title="Editar registro"
+                                  aria-label="Editar registro"
+                                  className="w-7 h-7 rounded-full bg-[#F7F9FB] hover:bg-[#141519] text-[#6E7480] hover:text-white border border-[#EEF1F5] flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1 shrink-0">
-                              {item.imdbRating && (
-                                <span className="px-2 py-0.5 rounded-full bg-[#F5C518] text-[#141519] keep-dark-text text-[0.65rem] font-extrabold tabular-nums">
-                                  IMDb {item.imdbRating}
-                                </span>
-                              )}
-                              <span className="px-2.5 py-1 rounded-full bg-[#141519] text-white text-[0.72rem] font-bold tabular-nums">
-                                {item.rating.toFixed(1)} ★
-                              </span>
-                            </div>
+                            {isUpcoming && (
+                              <div>
+                                <div className="flex items-center justify-between text-[0.66rem] font-bold text-[#6E7480] mb-1 tabular-nums">
+                                  <span>Nivel de Hype</span>
+                                  <span className="text-[#141519]">
+                                    {hypePct}%
+                                  </span>
+                                </div>
+                                <div className="w-full h-1.5 rounded-full bg-striped-pattern border border-[#EEF1F5] overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full bg-lavender-gradient transition-all duration-300"
+                                    style={{ width: `${hypePct}%` }}
+                                  />
+                                </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -2165,10 +2289,12 @@ export default function App() {
             items={vault}
             globalQuery={globalSearch}
             onOpenCreate={(group) => {
+              setEditingVaultItem(null);
               setDefaultVaultGroup(group || 'peliculas_series');
               setCreateModalMode('vault');
             }}
             onOpenAssistant={() => setIsAssistantOpen(true)}
+            onEditItem={handleOpenEditVault}
             onDeleteItem={requestDeleteVaultItem}
             spotifyProfile={spotifyProfile}
             isConnectingSpotify={isConnectingSpotify}
@@ -2280,8 +2406,13 @@ export default function App() {
       <QuickCreateModal
         mode={createModalMode}
         defaultVaultGroup={defaultVaultGroup}
-        onClose={() => setCreateModalMode(null)}
+        editingVaultItem={editingVaultItem}
+        onClose={() => {
+          setEditingVaultItem(null);
+          setCreateModalMode(null);
+        }}
         onAddVault={handleCreateVault}
+        onUpdateVault={handleUpdateVault}
         onAddSkill={handleCreateSkill}
         onAddWishlist={handleCreateWishlist}
         onAddSchedule={handleCreateSchedule}

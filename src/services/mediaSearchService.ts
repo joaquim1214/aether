@@ -19,7 +19,11 @@ export interface MediaSearchResult {
   actors?: string;
   plot?: string;
   releaseDate?: string;
+  rawReleaseDate?: string;
   daysRemaining?: number;
+  isFutureRelease?: boolean;
+  isPastRelease?: boolean;
+  releaseStatus?: 'upcoming' | 'released' | 'unknown';
   releaseFormat?: string;
   imageUrl?: string;
   audioPreviewUrl?: string;
@@ -38,35 +42,239 @@ export function upgradeItunesArtwork(url?: string): string | undefined {
   return url.replace(/100x100bb/g, '600x600bb').replace(/100x100/g, '600x600');
 }
 
+const SPANISH_MONTHS: Record<string, number> = {
+  ene: 0,
+  enero: 0,
+  feb: 1,
+  febrero: 1,
+  mar: 2,
+  marzo: 2,
+  abr: 3,
+  abril: 3,
+  may: 4,
+  mayo: 4,
+  jun: 5,
+  junio: 5,
+  jul: 6,
+  julio: 6,
+  ago: 7,
+  agosto: 7,
+  sep: 8,
+  sept: 8,
+  septiembre: 8,
+  set: 8,
+  oct: 9,
+  octubre: 9,
+  nov: 10,
+  noviembre: 10,
+  dic: 11,
+  diciembre: 11,
+};
+
+const SHORT_MONTH_LABELS = [
+  'Ene',
+  'Feb',
+  'Mar',
+  'Abr',
+  'May',
+  'Jun',
+  'Jul',
+  'Ago',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dic',
+];
+
+function formatLocalIsoDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatSpanishShortDate(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mon = SHORT_MONTH_LABELS[d.getMonth()] || 'Ene';
+  const yyyy = d.getFullYear();
+  return `${dd} ${mon} ${yyyy}`;
+}
+
+function parseFlexibleDateToLocalMidnight(rawDate?: string): {
+  date: Date | null;
+  isYearOnly: boolean;
+} {
+  if (!rawDate) return { date: null, isYearOnly: false };
+  const trimmed = rawDate.trim();
+  if (
+    !trimmed ||
+    trimmed.toLowerCase() === 'en espera' ||
+    trimmed.toLowerCase() === 'por confirmar' ||
+    trimmed.toLowerCase() === 'próximo estreno'
+  ) {
+    return { date: null, isYearOnly: false };
+  }
+
+  // 1. Exact YYYY-MM-DD (or ISO timestamp starting with YYYY-MM-DD)
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    const m = parseInt(isoMatch[2], 10) - 1;
+    const d = parseInt(isoMatch[3], 10);
+    const parsed = new Date(y, m, d);
+    if (!isNaN(parsed.getTime())) {
+      return { date: parsed, isYearOnly: false };
+    }
+  }
+
+  // 2. Spanish date like "15 Nov 2026" or "15 de Noviembre de 2026"
+  const esMatch = trimmed.match(
+    /^(\d{1,2})\s+(?:de\s+)?([A-Za-zÁÉÍÓÚáéíóú.]+)\s+(?:de\s+)?(\d{4})$/i
+  );
+  if (esMatch) {
+    const day = parseInt(esMatch[1], 10);
+    const monthKey = esMatch[2].replace(/\./g, '').toLowerCase();
+    const year = parseInt(esMatch[3], 10);
+    const monthIdx = SPANISH_MONTHS[monthKey];
+    if (monthIdx !== undefined) {
+      const parsed = new Date(year, monthIdx, day);
+      if (!isNaN(parsed.getTime())) {
+        return { date: parsed, isYearOnly: false };
+      }
+    }
+  }
+
+  // 3. Only 4-digit year (e.g. "2027" or "2014" or "2014–2019")
+  const yearOnlyMatch = trimmed.match(/^(\d{4})(?:[–\-]\d{0,4})?$/);
+  if (yearOnlyMatch) {
+    const yearNum = parseInt(yearOnlyMatch[1], 10);
+    const nowYear = new Date().getFullYear();
+    if (yearNum > nowYear) {
+      return { date: new Date(yearNum, 5, 15), isYearOnly: true };
+    }
+    if (yearNum < nowYear) {
+      return { date: new Date(yearNum, 0, 1), isYearOnly: true };
+    }
+    return { date: null, isYearOnly: true };
+  }
+
+  // 4. Generic Date fallback (e.g., "07 Nov 2014" from OMDb)
+  const fallback = new Date(trimmed);
+  if (!isNaN(fallback.getTime())) {
+    return {
+      date: new Date(
+        fallback.getFullYear(),
+        fallback.getMonth(),
+        fallback.getDate()
+      ),
+      isYearOnly: false,
+    };
+  }
+
+  return { date: null, isYearOnly: false };
+}
+
 /**
- * Formats an ISO date string into a human-friendly Spanish date and calculates days remaining.
+ * Formats an ISO or Spanish date string and strictly compares against current system date.
+ * - If release date is after today -> isFuture: true, exact daysRemaining (> 0)
+ * - If release date is today or in the past -> isPast: true, daysRemaining: 0
  */
 export function computeReleaseCountdown(rawDate?: string): {
   formattedDate: string;
+  isoDate: string;
   daysRemaining: number;
+  isFuture: boolean;
+  isPast: boolean;
 } {
-  if (!rawDate) {
-    return { formattedDate: 'Próximo Estreno', daysRemaining: 15 };
-  }
-
-  const parsed = new Date(rawDate);
-  if (isNaN(parsed.getTime())) {
-    return { formattedDate: rawDate, daysRemaining: 15 };
-  }
-
   const now = new Date();
-  const diffMs = parsed.getTime() - now.getTime();
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  const todayMidnight = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
 
-  const formattedDate = parsed.toLocaleDateString('es-ES', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  });
+  const defaultFuture = new Date(todayMidnight);
+  defaultFuture.setDate(defaultFuture.getDate() + 30);
+
+  if (!rawDate) {
+    return {
+      formattedDate: formatSpanishShortDate(defaultFuture),
+      isoDate: formatLocalIsoDate(defaultFuture),
+      daysRemaining: 30,
+      isFuture: true,
+      isPast: false,
+    };
+  }
+
+  const { date: parsedDate } = parseFlexibleDateToLocalMidnight(rawDate);
+  if (!parsedDate) {
+    return {
+      formattedDate: formatSpanishShortDate(defaultFuture),
+      isoDate: formatLocalIsoDate(defaultFuture),
+      daysRemaining: 30,
+      isFuture: true,
+      isPast: false,
+    };
+  }
+
+  const diffMs = parsedDate.getTime() - todayMidnight.getTime();
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const formattedDate = formatSpanishShortDate(parsedDate);
+  const isoDate = formatLocalIsoDate(parsedDate);
+
+  if (diffDays > 0) {
+    return {
+      formattedDate,
+      isoDate,
+      daysRemaining: Math.min(3650, diffDays),
+      isFuture: true,
+      isPast: false,
+    };
+  }
 
   return {
     formattedDate,
-    daysRemaining: diffDays > 0 ? Math.min(3650, diffDays) : 14,
+    isoDate,
+    daysRemaining: 0,
+    isFuture: false,
+    isPast: true,
+  };
+}
+
+/**
+ * Calcula con precisión el contador de días restantes para las tarjetas
+ * de Hype Radar en el Dashboard y en la Bóveda a partir de `releaseDate`
+ * o `daysRemaining` guardado.
+ */
+export function getAccurateHypeCountdown(
+  releaseDate?: string,
+  storedDaysRemaining?: number
+): {
+  daysRemaining: number;
+  formattedDate: string;
+  isoDate: string;
+  isFuture: boolean;
+  isPast: boolean;
+} {
+  if (releaseDate && releaseDate.trim() && releaseDate !== 'Por confirmar') {
+    const { date: parsed } = parseFlexibleDateToLocalMidnight(releaseDate);
+    if (parsed) {
+      return computeReleaseCountdown(releaseDate);
+    }
+  }
+  const safeDays =
+    typeof storedDaysRemaining === 'number' && !isNaN(storedDaysRemaining)
+      ? Math.max(0, Math.min(3650, Math.round(storedDaysRemaining)))
+      : 15;
+  const now = new Date();
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  target.setDate(target.getDate() + safeDays);
+  return {
+    daysRemaining: safeDays,
+    formattedDate: releaseDate || formatSpanishShortDate(target),
+    isoDate: formatLocalIsoDate(target),
+    isFuture: safeDays > 0,
+    isPast: safeDays <= 0,
   };
 }
 
@@ -76,7 +284,14 @@ export function computeReleaseCountdown(rawDate?: string): {
 async function searchImdbMedia(query: string): Promise<MediaSearchResult[]> {
   const imdbRecords = await searchImdbDatabase(query);
   return imdbRecords.map((rec) => {
-    const countdown = computeReleaseCountdown(rec.released || rec.year);
+    const rawDateSource = rec.released || rec.year;
+    const countdown = rawDateSource
+      ? computeReleaseCountdown(rawDateSource)
+      : null;
+    const { date: parsedDate, isYearOnly } =
+      parseFlexibleDateToLocalMidnight(rawDateSource);
+    const hasExactDate = Boolean(parsedDate && !isYearOnly);
+
     return {
       id: rec.id,
       imdbId: rec.imdbId,
@@ -87,8 +302,16 @@ async function searchImdbMedia(query: string): Promise<MediaSearchResult[]> {
       title: rec.title,
       creator: rec.director,
       year: rec.year,
-      releaseDate: countdown.formattedDate,
-      daysRemaining: countdown.daysRemaining,
+      releaseDate: countdown?.formattedDate,
+      rawReleaseDate: hasExactDate ? countdown?.isoDate : undefined,
+      daysRemaining: countdown?.daysRemaining,
+      isFutureRelease: countdown ? countdown.isFuture : false,
+      isPastRelease: countdown ? countdown.isPast : false,
+      releaseStatus: countdown
+        ? countdown.isFuture
+          ? 'upcoming'
+          : 'released'
+        : 'unknown',
       releaseFormat:
         rec.mediaType === 'series'
           ? `Serie TV · IMDb ${rec.imdbRating} ★`
@@ -105,24 +328,44 @@ async function searchImdbMedia(query: string): Promise<MediaSearchResult[]> {
 /**
  * 1B. TMDB Multi-Search (via server proxy /api/media/tmdb when TMDB_API_KEY is configured)
  */
-async function searchTmdbMulti(query: string): Promise<MediaSearchResult[]> {
+async function searchTmdbMulti(
+  query: string,
+  upcomingPriority = false
+): Promise<MediaSearchResult[]> {
   try {
     const res = await fetch(
-      `/api/media/tmdb?q=${encodeURIComponent(query.trim())}`
+      `/api/media/tmdb?q=${encodeURIComponent(query.trim())}${
+        upcomingPriority ? '&mode=upcoming' : ''
+      }`
     );
     if (!res.ok) return [];
     const data = await res.json();
     if (!data?.enabled || !Array.isArray(data?.results)) return [];
 
     return data.results.map((item: any) => {
-      const countdown = computeReleaseCountdown(item.releaseDate);
+      const rawDate = item.rawReleaseDate || item.releaseDate || '';
+      const countdown = rawDate ? computeReleaseCountdown(rawDate) : null;
       return {
         id: String(item.id),
         title: String(item.title),
         creator: String(item.creator || 'TMDB'),
         year: String(item.year || ''),
-        releaseDate: countdown.formattedDate,
-        daysRemaining: countdown.daysRemaining,
+        releaseDate: countdown?.formattedDate,
+        rawReleaseDate: countdown?.isoDate || rawDate || undefined,
+        daysRemaining: countdown?.daysRemaining,
+        isFutureRelease: countdown
+          ? countdown.isFuture
+          : Boolean(item.isFutureRelease),
+        isPastRelease: countdown
+          ? countdown.isPast
+          : Boolean(item.isPastRelease),
+        releaseStatus:
+          item.releaseStatus ||
+          (countdown
+            ? countdown.isFuture
+              ? 'upcoming'
+              : 'released'
+            : 'unknown'),
         releaseFormat:
           item.mediaType === 'series' ? 'Serie TV · TMDB' : 'Película · Cine',
         imageUrl: item.imageUrl,
@@ -143,7 +386,7 @@ async function searchTmdbMulti(query: string): Promise<MediaSearchResult[]> {
  */
 async function searchItunesMovies(query: string): Promise<MediaSearchResult[]> {
   try {
-    const url = `https://itunes.apple.com/search?media=movie&limit=4&term=${encodeURIComponent(
+    const url = `https://itunes.apple.com/search?media=movie&limit=5&term=${encodeURIComponent(
       query.trim()
     )}`;
     const res = await fetch(url);
@@ -154,17 +397,25 @@ async function searchItunesMovies(query: string): Promise<MediaSearchResult[]> {
     return list
       .filter((r) => r.trackName)
       .map((r) => {
-        const rawDate = r.releaseDate || '';
+        const rawDate = r.releaseDate ? String(r.releaseDate).slice(0, 10) : '';
         const year = rawDate ? rawDate.slice(0, 4) : '';
-        const countdown = computeReleaseCountdown(rawDate);
+        const countdown = rawDate ? computeReleaseCountdown(rawDate) : null;
         const genre = r.primaryGenreName ? String(r.primaryGenreName) : 'Cine';
         return {
           id: `itunes-movie-${r.trackId || Math.random()}`,
           title: String(r.trackName),
           creator: String(r.artistName || 'Director Destacado'),
           year,
-          releaseDate: countdown.formattedDate,
-          daysRemaining: countdown.daysRemaining,
+          releaseDate: countdown?.formattedDate,
+          rawReleaseDate: countdown?.isoDate || rawDate || undefined,
+          daysRemaining: countdown?.daysRemaining,
+          isFutureRelease: countdown ? countdown.isFuture : false,
+          isPastRelease: countdown ? countdown.isPast : false,
+          releaseStatus: countdown
+            ? countdown.isFuture
+              ? 'upcoming'
+              : 'released'
+            : 'unknown',
           releaseFormat: `Película · ${genre}`,
           imageUrl: upgradeItunesArtwork(r.artworkUrl100),
           tags: [genre, 'Cine', year].filter(Boolean),
@@ -193,13 +444,18 @@ async function searchTvMazeSeries(query: string): Promise<MediaSearchResult[]> {
     if (!Array.isArray(data)) return [];
 
     return data
-      .slice(0, 4)
+      .slice(0, 5)
       .filter((entry) => entry?.show?.name)
       .map((entry) => {
         const show = entry.show;
-        const rawDate = show.premiered || '';
+        const rawDate = show.premiered ? String(show.premiered).slice(0, 10) : '';
         const year = rawDate ? rawDate.slice(0, 4) : '';
-        const countdown = computeReleaseCountdown(rawDate);
+        const isInDevelopment =
+          show.status === 'In Development' ||
+          show.status === 'To Be Determined';
+        const countdown = rawDate ? computeReleaseCountdown(rawDate) : null;
+        const isFuture = Boolean(countdown?.isFuture || isInDevelopment);
+        const isPast = Boolean(!isFuture && countdown?.isPast);
         const network =
           show.network?.name || show.webChannel?.name || 'Serie TV';
         const genres: string[] = Array.isArray(show.genres)
@@ -226,8 +482,16 @@ async function searchTvMazeSeries(query: string): Promise<MediaSearchResult[]> {
           title: String(show.name),
           creator: String(network),
           year,
-          releaseDate: countdown.formattedDate,
-          daysRemaining: countdown.daysRemaining,
+          releaseDate: countdown?.formattedDate,
+          rawReleaseDate: countdown?.isoDate || rawDate || undefined,
+          daysRemaining: countdown?.daysRemaining,
+          isFutureRelease: isFuture,
+          isPastRelease: isPast,
+          releaseStatus: isFuture
+            ? 'upcoming'
+            : isPast
+            ? 'released'
+            : 'unknown',
           releaseFormat: `Serie · ${network}`,
           imageUrl: poster,
           tags: genres.length > 0 ? genres : ['Serie', network],
@@ -249,7 +513,7 @@ export async function searchJikanAnime(
   try {
     const url = `https://api.jikan.moe/v4/anime?q=${encodeURIComponent(
       query.trim()
-    )}&limit=4&sfw=true`;
+    )}&limit=5&sfw=true`;
     const res = await fetch(url);
     if (!res.ok) return [];
     const json = await res.json();
@@ -258,10 +522,13 @@ export async function searchJikanAnime(
     return list
       .filter((a) => a.title)
       .map((a) => {
-        const rawDate = a.aired?.from || '';
+        const rawDate = a.aired?.from ? String(a.aired.from).slice(0, 10) : '';
         const year =
           String(a.year || '') || (rawDate ? rawDate.slice(0, 4) : '');
-        const countdown = computeReleaseCountdown(rawDate);
+        const countdown = rawDate ? computeReleaseCountdown(rawDate) : null;
+        const isNotYetAired = a.status === 'Not yet aired';
+        const isFuture = Boolean(isNotYetAired || countdown?.isFuture);
+        const isPast = Boolean(!isFuture && countdown?.isPast);
         const studio =
           Array.isArray(a.studios) && a.studios[0]?.name
             ? a.studios[0].name
@@ -280,8 +547,16 @@ export async function searchJikanAnime(
           title: String(a.title_english || a.title),
           creator: String(studio),
           year,
-          releaseDate: countdown.formattedDate,
-          daysRemaining: countdown.daysRemaining,
+          releaseDate: countdown?.formattedDate,
+          rawReleaseDate: countdown?.isoDate || rawDate || undefined,
+          daysRemaining: countdown?.daysRemaining,
+          isFutureRelease: isFuture,
+          isPastRelease: isPast,
+          releaseStatus: isFuture
+            ? 'upcoming'
+            : isPast
+            ? 'released'
+            : 'unknown',
           releaseFormat: `Anime · ${studio}`,
           imageUrl: poster,
           tags: ['Anime', ...genres].slice(0, 3),
@@ -448,6 +723,8 @@ export async function searchMediaByCategory(
   }
 
   if (vaultGroup === 'peliculas_series' || vaultGroup === 'proximamente') {
+    const isUpcomingSearch = vaultGroup === 'proximamente';
+
     // If the user typed an exact IMDb ID (e.g. tt0816692), query IMDb directly
     if (/^tt\d{5,12}$/i.test(q)) {
       return searchImdbMedia(q);
@@ -457,7 +734,7 @@ export async function searchMediaByCategory(
     const [imdbResults, tmdbResults, movies, series, anime] = await Promise.all(
       [
         searchImdbMedia(q),
-        searchTmdbMulti(q),
+        searchTmdbMulti(q, isUpcomingSearch),
         searchItunesMovies(q),
         searchTvMazeSeries(q),
         includeAnime ? searchJikanAnime(q) : Promise.resolve([]),
@@ -475,7 +752,35 @@ export async function searchMediaByCategory(
       }
     };
 
-    // Prioritize IMDb results (which include official imdbId, imdbRating, actors, plot, and high-res poster)
+    if (isUpcomingSearch) {
+      // When searching in Hype Radar (Próximamente), prioritize TMDB + TVMaze + Jikan + IMDb
+      // and sort items whose status is Upcoming or whose release date is in the future first!
+      tmdbResults.forEach(pushUnique);
+      imdbResults.forEach(pushUnique);
+      series.forEach(pushUnique);
+      anime.forEach(pushUnique);
+      movies.forEach(pushUnique);
+
+      const currentYear = new Date().getFullYear();
+      merged.sort((a, b) => {
+        const aFuture = a.isFutureRelease || a.releaseStatus === 'upcoming' ? 2 : 0;
+        const bFuture = b.isFutureRelease || b.releaseStatus === 'upcoming' ? 2 : 0;
+        if (aFuture !== bFuture) return bFuture - aFuture;
+
+        const aYear = parseInt(a.year || '0', 10) || 0;
+        const bYear = parseInt(b.year || '0', 10) || 0;
+        const aRecentOrFutureYear = aYear >= currentYear ? 1 : 0;
+        const bRecentOrFutureYear = bYear >= currentYear ? 1 : 0;
+        if (aRecentOrFutureYear !== bRecentOrFutureYear) {
+          return bRecentOrFutureYear - aRecentOrFutureYear;
+        }
+        return bYear - aYear;
+      });
+
+      return merged.slice(0, 8);
+    }
+
+    // Standard Películas & Series Vistas order: prioritize IMDb results first
     imdbResults.forEach(pushUnique);
     tmdbResults.forEach(pushUnique);
     movies.forEach(pushUnique);
@@ -508,9 +813,8 @@ export async function findBestMediaMatch(
     if (vaultGroup === 'peliculas_series' || vaultGroup === 'proximamente') {
       const imdbDetail = await fetchImdbDetailsByQueryOrId(cleanTitle);
       if (imdbDetail) {
-        const countdown = computeReleaseCountdown(
-          imdbDetail.released || imdbDetail.year
-        );
+        const rawDateSource = imdbDetail.released || imdbDetail.year;
+        const countdown = computeReleaseCountdown(rawDateSource);
         return {
           id: imdbDetail.id,
           imdbId: imdbDetail.imdbId,
@@ -522,7 +826,11 @@ export async function findBestMediaMatch(
           creator: imdbDetail.director,
           year: imdbDetail.year,
           releaseDate: countdown.formattedDate,
+          rawReleaseDate: countdown.isoDate,
           daysRemaining: countdown.daysRemaining,
+          isFutureRelease: countdown.isFuture,
+          isPastRelease: countdown.isPast,
+          releaseStatus: countdown.isFuture ? 'upcoming' : 'released',
           releaseFormat:
             imdbDetail.mediaType === 'series'
               ? `Serie TV · IMDb ${imdbDetail.imdbRating} ★`

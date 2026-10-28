@@ -37,8 +37,10 @@ type ModalMode = 'vault' | 'skill' | 'wishlist' | 'schedule' | null;
 interface QuickCreateModalProps {
   mode: ModalMode;
   defaultVaultGroup?: Exclude<VaultFilterId, 'todo'>;
+  editingVaultItem?: VaultItem | null;
   onClose: () => void;
   onAddVault: (item: Omit<VaultItem, 'id'>) => void;
+  onUpdateVault?: (item: VaultItem) => void;
   onAddSkill: (item: Omit<SkillItem, 'id'>) => void;
   onAddWishlist: (item: Omit<WishlistItem, 'id'>) => void;
   onAddSchedule: (item: Omit<ScheduleBlock, 'id'>) => void;
@@ -89,8 +91,10 @@ const ModalAudioWave: React.FC<{ active: boolean }> = ({ active }) => (
 export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
   mode,
   defaultVaultGroup = 'peliculas_series',
+  editingVaultItem = null,
   onClose,
   onAddVault,
+  onUpdateVault,
   onAddSkill,
   onAddWishlist,
   onAddSchedule,
@@ -127,11 +131,19 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
   const [isResolvingModalPreview, setIsResolvingModalPreview] = useState(false);
 
   // ⏳ Próximamente (Hype Radar) specific fields
-  const [vReleaseIsoDate, setVReleaseIsoDate] = useState('2026-11-15');
-  const [vReleaseDate, setVReleaseDate] = useState('15 Nov 2026');
-  const [vDaysRemaining, setVDaysRemaining] = useState('19');
+  const initialFutureCountdown = computeReleaseCountdown();
+  const [vReleaseIsoDate, setVReleaseIsoDate] = useState(
+    initialFutureCountdown.isoDate
+  );
+  const [vReleaseDate, setVReleaseDate] = useState(
+    initialFutureCountdown.formattedDate
+  );
+  const [vDaysRemaining, setVDaysRemaining] = useState(
+    String(initialFutureCountdown.daysRemaining)
+  );
   const [vHypeLevel, setVHypeLevel] = useState('95');
   const [vReleaseFormat, setVReleaseFormat] = useState('Cine / IMAX');
+  const [hasManualDateOverride, setHasManualDateOverride] = useState(false);
 
   // ▶️ Videos & Canales specific fields
   const [vDuration, setVDuration] = useState('24:15');
@@ -175,11 +187,16 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
     setVVideoUrl('');
     setVKeyTakeaway('');
     setVMediaCategoryOverride(null);
+    setHasManualDateOverride(false);
 
     if (nextGroup === 'peliculas_series') {
       setVTags('Sci-Fi, Favorito');
       setVRating('9.5');
     } else if (nextGroup === 'proximamente') {
+      const nextDefaultFuture = computeReleaseCountdown();
+      setVReleaseIsoDate(nextDefaultFuture.isoDate);
+      setVReleaseDate(nextDefaultFuture.formattedDate);
+      setVDaysRemaining(String(nextDefaultFuture.daysRemaining));
       setVTags('Estreno, Hype');
       setVHypeLevel('95');
       setVReleaseFormat('Cine / IMAX');
@@ -200,10 +217,81 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
     }
   };
 
+  const populateFromExistingVaultItem = (item: VaultItem) => {
+    stopModalAudio();
+    setMagicQuery('');
+    setMagicResults([]);
+    setShowDropdown(false);
+    setVGroup(item.vaultGroup);
+    setVTitle(item.title || '');
+    setVCreator(item.creator || '');
+    setVRating(String(item.rating ?? 9.5));
+    setVTags((item.tags || []).join(', '));
+    setVReview(item.review || '');
+    setVImageUrl(item.imageUrl || '');
+    setVAudioPreviewUrl(item.audioPreviewUrl || '');
+    setVReleaseYear(item.releaseYear || '');
+    setVImdbId(item.imdbId || '');
+    setVImdbRating(item.imdbRating || '');
+    setVImdbVotes(item.imdbVotes || '');
+    setVActors(item.actors || '');
+    setVPlot(item.plot || '');
+    setVMediaCategoryOverride(
+      item.category === 'Cine' || item.category === 'Serie'
+        ? item.category
+        : null
+    );
+    setHasManualDateOverride(false);
+
+    // Próximamente fields
+    const countdown = computeReleaseCountdown(item.releaseDate);
+    setVReleaseIsoDate(countdown.isoDate);
+    setVReleaseDate(countdown.formattedDate);
+    setVDaysRemaining(
+      String(
+        typeof item.daysRemaining === 'number'
+          ? item.daysRemaining
+          : countdown.daysRemaining
+      )
+    );
+    setVHypeLevel(String(item.hypeLevel ?? 95));
+    setVReleaseFormat(item.releaseFormat || item.creator || 'Cine / IMAX');
+
+    // Videos & Música fields
+    setVDuration(item.duration || '24:15');
+    setVVideoUrl(item.videoUrl || '');
+    setVKeyTakeaway(item.keyTakeaway || item.review || '');
+
+    // Personas fields
+    setVRelationship(item.relationshipTag || 'Amigo');
+    const parsedBirthday = (item.personMeta || '')
+      .replace(/^Cumpleaños:\s*/i, '')
+      .trim();
+    setVBirthday(parsedBirthday);
+
+    // Momentos fields
+    setVLocation(
+      item.location ||
+        (item.vaultGroup === 'momentos' && item.creator !== 'Momento Personal'
+          ? item.creator
+          : '')
+    );
+    if (item.consumedDate && item.consumedDate !== 'En Espera') {
+      const parsedDate = computeReleaseCountdown(item.consumedDate);
+      setVMomentDateIso(parsedDate.isoDate || todayIso);
+    } else {
+      setVMomentDateIso(todayIso);
+    }
+  };
+
   useEffect(() => {
-    setVGroup(defaultVaultGroup);
-    resetCategoryFields(defaultVaultGroup);
-  }, [defaultVaultGroup, mode]);
+    if (mode === 'vault' && editingVaultItem) {
+      populateFromExistingVaultItem(editingVaultItem);
+    } else {
+      setVGroup(defaultVaultGroup);
+      resetCategoryFields(defaultVaultGroup);
+    }
+  }, [defaultVaultGroup, mode, editingVaultItem]);
 
   useEffect(() => {
     return () => {
@@ -288,14 +376,15 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
     }
 
     if (vGroup === 'proximamente') {
-      if (item.releaseDate) {
-        const parsed = new Date(item.releaseDate);
-        if (!Number.isNaN(parsed.getTime())) {
-          setVReleaseIsoDate(parsed.toISOString().split('T')[0]);
+      // If user already manually edited the release date, do NOT let an ambiguous or past API date overwrite it
+      const apiRawDate = item.rawReleaseDate || item.releaseDate || item.year;
+      if (apiRawDate) {
+        const calc = computeReleaseCountdown(apiRawDate);
+        if (!hasManualDateOverride || calc.isFuture) {
+          setVReleaseIsoDate(calc.isoDate);
+          setVReleaseDate(calc.formattedDate);
+          setVDaysRemaining(String(calc.daysRemaining));
         }
-        const calc = computeReleaseCountdown(item.releaseDate);
-        setVReleaseDate(calc.formattedDate);
-        setVDaysRemaining(String(calc.daysRemaining));
       }
     }
 
@@ -337,11 +426,20 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
   };
 
   const handleReleaseDatePickerChange = (isoValue: string) => {
+    setHasManualDateOverride(true);
     setVReleaseIsoDate(isoValue);
     if (!isoValue) return;
     const calc = computeReleaseCountdown(isoValue);
     setVReleaseDate(calc.formattedDate);
     setVDaysRemaining(String(calc.daysRemaining));
+  };
+
+  const handleMoveUpcomingToWatched = () => {
+    setVGroup('peliculas_series');
+    setHasManualDateOverride(false);
+    if (!vReview.trim() && vPlot.trim()) {
+      setVReview(vPlot.trim());
+    }
   };
 
   // Skill form state
@@ -423,6 +521,11 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
           ? 'En Espera'
           : vGroup === 'momentos'
           ? formatIsoToSpanishDate(vMomentDateIso)
+          : editingVaultItem &&
+            editingVaultItem.vaultGroup === vGroup &&
+            editingVaultItem.consumedDate &&
+            editingVaultItem.consumedDate !== 'En Espera'
+          ? editingVaultItem.consumedDate
           : todayFormatted;
 
       const parsedTags = vTags
@@ -443,7 +546,7 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
 
       const computedCreator =
         vGroup === 'proximamente'
-          ? vReleaseFormat.trim() || 'Estreno Oficial'
+          ? vCreator.trim() || vReleaseFormat.trim() || 'Estreno Oficial'
           : vGroup === 'personas'
           ? vRelationship
           : vGroup === 'momentos'
@@ -452,7 +555,8 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
 
       const computedReview =
         vGroup === 'proximamente'
-          ? `Esperando estreno en ${vReleaseFormat || 'Cartelera'} (${vReleaseDate}). Nivel de Hype: ${vHypeLevel}%.`
+          ? vReview.trim() ||
+            `Esperando estreno en ${vReleaseFormat || 'Cartelera'} (${vReleaseDate}). Nivel de Hype: ${vHypeLevel}%.`
           : vGroup === 'videos'
           ? vKeyTakeaway.trim() ||
             vReview.trim() ||
@@ -475,7 +579,7 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
               .slice(0, 2)
           : undefined;
 
-      onAddVault({
+      const vaultPayload: Omit<VaultItem, 'id'> = {
         title: vTitle.trim(),
         creator: computedCreator,
         category: categoryMap[vGroup],
@@ -486,7 +590,9 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
         tags: finalTags.slice(0, 8),
         review: computedReview,
         accent:
-          vGroup === 'proximamente' || vGroup === 'personas'
+          editingVaultItem && editingVaultItem.vaultGroup === vGroup
+            ? editingVaultItem.accent
+            : vGroup === 'proximamente' || vGroup === 'personas'
             ? 'lavender'
             : 'mint',
         artVariant:
@@ -509,14 +615,22 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
         imdbVotes: vImdbVotes.trim() || undefined,
         actors: vActors.trim() || undefined,
         plot: vPlot.trim() || undefined,
-        releaseDate: vGroup === 'proximamente' ? vReleaseDate : undefined,
+        releaseDate:
+          vGroup === 'proximamente'
+            ? computeReleaseCountdown(vReleaseIsoDate || vReleaseDate)
+                .formattedDate
+            : undefined,
         daysRemaining:
           vGroup === 'proximamente'
-            ? parseInt(vDaysRemaining, 10) || 15
+            ? Math.max(
+                0,
+                computeReleaseCountdown(vReleaseIsoDate || vReleaseDate)
+                  .daysRemaining
+              )
             : undefined,
         hypeLevel:
           vGroup === 'proximamente'
-            ? parseInt(vHypeLevel, 10) || 100
+            ? Math.min(100, Math.max(0, parseInt(vHypeLevel, 10) || 95))
             : undefined,
         releaseFormat: vGroup === 'proximamente' ? vReleaseFormat : undefined,
         duration: vGroup === 'videos' ? vDuration : undefined,
@@ -538,7 +652,17 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
           vGroup === 'momentos' && vLocation.trim()
             ? vLocation.trim()
             : undefined,
-      });
+      };
+
+      if (editingVaultItem && onUpdateVault) {
+        onUpdateVault({
+          ...vaultPayload,
+          id: editingVaultItem.id,
+          createdAt: editingVaultItem.createdAt,
+        });
+      } else {
+        onAddVault(vaultPayload);
+      }
       onClose();
     } else if (mode === 'skill' && sName.trim()) {
       onAddSkill({
@@ -621,7 +745,9 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
 
   const modalTitle =
     mode === 'vault'
-      ? 'Registrar en Bóveda'
+      ? editingVaultItem
+        ? 'Editar en Bóveda'
+        : 'Registrar en Bóveda'
       : mode === 'skill'
       ? 'Nueva Habilidad RPG'
       : mode === 'wishlist'
@@ -631,6 +757,10 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
   const currentRatingNum = parseFloat(vRating) || 9.5;
   const computedTierPreview: VaultTier =
     currentRatingNum >= 9 ? 'S' : currentRatingNum >= 7.8 ? 'A' : 'B';
+
+  const liveReleaseStatus = computeReleaseCountdown(
+    vReleaseIsoDate || vReleaseDate
+  );
 
   const renderLiveAutocompleteField = (placeholderText: string) => (
     <div className="relative">
@@ -705,15 +835,32 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
                   </div>
                   <p className="text-[0.72rem] text-[#6E7480] truncate">
                     {resItem.creator}
+                    {vGroup === 'proximamente' && resItem.releaseDate
+                      ? ` · ${resItem.releaseDate}`
+                      : ''}
                   </p>
                 </div>
               </div>
 
-              {resItem.imdbRating && (
-                <span className="px-2 py-0.5 rounded-full bg-[#F7F9FB] border border-[#EEF1F5] text-[#141519] text-[0.68rem] font-semibold tabular-nums shrink-0">
-                  {resItem.imdbRating} ★
-                </span>
-              )}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {vGroup === 'proximamente' ? (
+                  resItem.isFutureRelease ? (
+                    <span className="px-2.5 py-0.5 rounded-full bg-[#BBC6F8] text-[#141519] keep-dark-text text-[0.66rem] font-bold tabular-nums">
+                      ⏳ Faltan {resItem.daysRemaining}d
+                    </span>
+                  ) : resItem.isPastRelease ? (
+                    <span className="px-2 py-0.5 rounded-full bg-[#F7F9FB] border border-[#EEF1F5] text-[#6E7480] text-[0.65rem] font-semibold">
+                      Ya estrenada
+                    </span>
+                  ) : null
+                ) : (
+                  resItem.imdbRating && (
+                    <span className="px-2 py-0.5 rounded-full bg-[#F7F9FB] border border-[#EEF1F5] text-[#141519] text-[0.68rem] font-semibold tabular-nums">
+                      {resItem.imdbRating} ★
+                    </span>
+                  )
+                )}
+              </div>
             </button>
           ))}
         </div>
@@ -763,7 +910,12 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
                     onClick={() => {
                       if (vGroup !== tab.id) {
                         setVGroup(tab.id);
-                        resetCategoryFields(tab.id);
+                        if (!editingVaultItem) {
+                          resetCategoryFields(tab.id);
+                        } else {
+                          stopModalAudio();
+                          setShowDropdown(false);
+                        }
                       }
                     }}
                     className={`px-3.5 py-1.5 rounded-full text-[0.75rem] font-semibold transition-all cursor-pointer ${
@@ -907,9 +1059,16 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
                         </div>
                       )}
                       <div className="flex-1">
-                        <label className="block text-[0.75rem] font-semibold text-[#6E7480] mb-1.5">
-                          Título del Estreno
-                        </label>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <label className="text-[0.75rem] font-semibold text-[#6E7480]">
+                            Título del Estreno
+                          </label>
+                          {liveReleaseStatus.isFuture && (
+                            <span className="px-2.5 py-0.5 rounded-full bg-[#BBC6F8]/50 text-[#141519] keep-dark-text text-[0.65rem] font-bold">
+                              ⏳ Próximamente · En Espera
+                            </span>
+                          )}
+                        </div>
                         <input
                           type="text"
                           required
@@ -928,9 +1087,15 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
                             <Calendar className="w-3.5 h-3.5" />
                             <span>Fecha de Estreno Oficial</span>
                           </span>
-                          <span className="text-[0.68rem] font-bold text-[#141519] tabular-nums">
-                            Faltan {vDaysRemaining} días
-                          </span>
+                          {liveReleaseStatus.isFuture ? (
+                            <span className="px-2 py-0.5 rounded-full bg-[#141519] text-white text-[0.65rem] font-bold tabular-nums">
+                              Faltan {liveReleaseStatus.daysRemaining} días
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-[#F28B82]/25 text-[#141519] keep-dark-text text-[0.65rem] font-bold">
+                              Estreno pasado
+                            </span>
+                          )}
                         </label>
                         <input
                           type="date"
@@ -940,6 +1105,11 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
                           }
                           className="w-full h-11 px-4 rounded-2xl bg-[#F7F9FB] border border-[#EEF1F5] focus:border-[#141519] focus:bg-[#FFFFFF] text-[0.84rem] text-[#141519] tabular-nums focus:outline-none transition-all"
                         />
+                        {hasManualDateOverride && (
+                          <span className="block mt-1 text-[0.67rem] font-medium text-[#6E7480]">
+                            Fecha ajustada manualmente ({liveReleaseStatus.formattedDate})
+                          </span>
+                        )}
                       </div>
 
                       <div>
@@ -955,6 +1125,27 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
                         />
                       </div>
                     </div>
+
+                    {/* Alerta sutil si la fecha de estreno ya pasó */}
+                    {liveReleaseStatus.isPast && (
+                      <div className="p-3.5 rounded-2xl bg-[#F7F9FB] border border-[#BBC6F8] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-[0.76rem] font-bold text-[#141519]">
+                            Esta fecha de estreno ({liveReleaseStatus.formattedDate}) ya pasó
+                          </p>
+                          <p className="text-[0.7rem] font-medium text-[#6E7480] mt-0.5">
+                            Si ya se estrenó, puedes moverla a Películas & Series Vistas o elegir manualmente una fecha futura arriba.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleMoveUpcomingToWatched}
+                          className="px-3.5 py-2 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.71rem] font-bold whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+                        >
+                          Mover a Películas Vistas →
+                        </button>
+                      </div>
+                    )}
 
                     {/* Chips rápidos de plataforma/cine */}
                     <div className="flex flex-wrap gap-1.5">
@@ -1125,6 +1316,39 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
                             <ExternalLink className="w-4 h-4" />
                           </a>
                         )}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-12 gap-3 items-start">
+                      <div className="col-span-4">
+                        <label className="flex items-center justify-between text-[0.75rem] font-semibold text-[#6E7480] mb-1.5">
+                          <span>Calificación</span>
+                          <span className="px-2 py-0.5 rounded-full bg-[#141519] text-white text-[0.65rem] font-bold">
+                            Tier {computedTierPreview}
+                          </span>
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="1"
+                          max="10"
+                          value={vRating}
+                          onChange={(e) => setVRating(e.target.value)}
+                          className="w-full h-11 px-3.5 rounded-2xl bg-[#F7F9FB] border border-[#EEF1F5] focus:border-[#141519] focus:bg-[#FFFFFF] text-[0.85rem] font-semibold text-[#141519] tabular-nums focus:outline-none transition-all"
+                        />
+                      </div>
+
+                      <div className="col-span-8">
+                        <label className="block text-[0.75rem] font-semibold text-[#6E7480] mb-1.5">
+                          Nota o reseña personal
+                        </label>
+                        <input
+                          type="text"
+                          value={vReview}
+                          onChange={(e) => setVReview(e.target.value)}
+                          placeholder="¿En qué momento o mood escuchas este álbum/track?"
+                          className="w-full h-11 px-4 rounded-2xl bg-[#F7F9FB] border border-[#EEF1F5] focus:border-[#141519] focus:bg-[#FFFFFF] text-[0.85rem] text-[#141519] placeholder:text-[#A0A6B2] focus:outline-none transition-all"
+                        />
                       </div>
                     </div>
                   </>
@@ -1725,7 +1949,9 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
               type="submit"
               className="h-10 px-6 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.82rem] font-semibold transition-colors cursor-pointer"
             >
-              Guardar
+              {mode === 'vault' && editingVaultItem
+                ? 'Actualizar cambios'
+                : 'Guardar'}
             </button>
           </div>
         </form>

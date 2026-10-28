@@ -15,6 +15,7 @@ import {
   ListTodo,
   MoreHorizontal,
   Pause,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -51,7 +52,10 @@ import {
   searchSpotifyCatalog,
   SpotifyPlaylistItem,
 } from '../services/spotifyService';
-import { MediaSearchResult } from '../services/mediaSearchService';
+import {
+  getAccurateHypeCountdown,
+  MediaSearchResult,
+} from '../services/mediaSearchService';
 
 const SpotifyMinimalLogo: React.FC<{ className?: string }> = ({
   className = 'w-4 h-4',
@@ -119,6 +123,7 @@ interface VaultViewProps {
   globalQuery: string;
   onOpenCreate: (defaultVaultGroup?: Exclude<VaultFilterId, 'todo'>) => void;
   onOpenAssistant: () => void;
+  onEditItem?: (item: VaultItem) => void;
   onDeleteItem?: (item: VaultItem) => void;
   spotifyProfile?: { displayName: string; imageUrl?: string } | null;
   isConnectingSpotify?: boolean;
@@ -141,6 +146,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
   globalQuery,
   onOpenCreate,
   onOpenAssistant,
+  onEditItem,
   onDeleteItem,
   spotifyProfile,
   isConnectingSpotify,
@@ -866,6 +872,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           <span className="px-2.5 py-1 rounded-full bg-[#141519] text-white text-[0.7rem] font-bold tabular-nums">
                             {fav.rating.toFixed(1)} ★ · Tier {fav.tier}
                           </span>
+                          {onEditItem && (
+                            <button
+                              type="button"
+                              onClick={() => onEditItem(fav)}
+                              title="Editar registro"
+                              aria-label="Editar registro"
+                              className="w-8 h-8 rounded-full bg-white/60 hover:bg-white text-[#141519] keep-dark-text flex items-center justify-center cursor-pointer transition-colors"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={() => setActiveFilter(fav.vaultGroup)}
@@ -977,58 +994,85 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 <div className="space-y-3">
                   {upcomingItems.map((up, idx) => {
                     const isLavenderBadge = idx % 2 === 1;
+                    const countdownInfo = getAccurateHypeCountdown(
+                      up.releaseDate,
+                      up.daysRemaining
+                    );
+                    const hype = Math.min(
+                      100,
+                      Math.max(0, Number(up.hypeLevel ?? 95))
+                    );
+
                     return (
                       <div
                         key={up.id}
                         onClick={() => setActiveFilter('proximamente')}
-                        className="p-3.5 rounded-[20px] bg-[#F7F9FB] hover:bg-[#EBF0F5]/60 border border-[#EEF1F5] flex items-center justify-between gap-3 cursor-pointer transition-all"
+                        className="p-3.5 rounded-[20px] bg-[#F7F9FB] hover:bg-[#EBF0F5]/60 border border-[#EEF1F5] flex flex-col gap-2.5 cursor-pointer transition-all"
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div
-                            className={`w-10 h-10 rounded-[14px] flex items-center justify-center shrink-0 font-bold text-xs keep-dark-text overflow-hidden ${
-                              idx % 2 === 0
-                                ? 'bg-[#A8E6E3] text-[#141519]'
-                                : 'bg-[#BBC6F8] text-[#141519]'
-                            }`}
-                          >
-                            {up.imageUrl ? (
-                              <img
-                                src={up.imageUrl}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-11 h-14 rounded-[12px] overflow-hidden shrink-0 border border-[#EEF1F5] bg-[#FFFFFF]">
+                              <VisualArtwork
+                                variant={up.artVariant}
+                                accent={up.accent}
+                                imageUrl={up.imageUrl}
                                 alt={up.title}
-                                className="w-full h-full object-cover"
                               />
-                            ) : (
-                              <Film className="w-4 h-4" />
-                            )}
+                            </div>
+                            <div className="min-w-0">
+                              <h3 className="text-[0.86rem] font-bold text-[#141519] truncate">
+                                {up.title}
+                              </h3>
+                              <p className="text-[0.72rem] font-medium text-[#6E7480] truncate mt-0.5">
+                                {up.releaseFormat || up.creator} · Estreno:{' '}
+                                <strong className="text-[#141519]">
+                                  {countdownInfo.formattedDate}
+                                </strong>
+                              </p>
+                            </div>
                           </div>
-                          <div className="min-w-0">
-                            <h3 className="text-[0.86rem] font-bold text-[#141519] truncate">
-                              {up.title}
-                            </h3>
-                            <p className="text-[0.72rem] font-medium text-[#6E7480] truncate mt-0.5">
-                              {up.releaseFormat || up.creator} · Estreno:{' '}
-                              <strong className="text-[#141519]">
-                                {up.releaseDate || 'Pronto'}
-                              </strong>
-                            </p>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span
+                              className={`px-2.5 py-1 rounded-full text-[0.7rem] font-bold tabular-nums whitespace-nowrap ${
+                                isLavenderBadge
+                                  ? 'bg-[#BBC6F8] text-[#141519] keep-dark-text'
+                                  : 'bg-[#141519] text-white'
+                              }`}
+                            >
+                              {countdownInfo.isFuture
+                                ? `Faltan ${countdownInfo.daysRemaining} días`
+                                : 'Ya estrenada'}
+                            </span>
+                            {onEditItem && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onEditItem(up);
+                                }}
+                                title="Editar estreno"
+                                aria-label="Editar estreno"
+                                className="w-7 h-7 rounded-full bg-[#FFFFFF] hover:bg-[#141519] text-[#6E7480] hover:text-white border border-[#EEF1F5] flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                              >
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </div>
 
-                        <div className="flex flex-col items-end gap-1 shrink-0">
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[0.7rem] font-bold tabular-nums whitespace-nowrap ${
-                              isLavenderBadge
-                                ? 'bg-[#BBC6F8] text-[#141519] keep-dark-text'
-                                : 'bg-[#141519] text-white'
-                            }`}
-                          >
-                            {up.daysRemaining
-                              ? `Faltan ${up.daysRemaining} días`
-                              : `Hype: ${up.hypeLevel || 100}%`}
-                          </span>
-                          <span className="text-[0.66rem] font-semibold text-[#8E95A2] tabular-nums">
-                            Hype: {up.hypeLevel || 100}%
-                          </span>
+                        {/* Barra de Nivel de Hype (0-100%) */}
+                        <div>
+                          <div className="flex items-center justify-between text-[0.68rem] font-bold text-[#6E7480] mb-1 tabular-nums">
+                            <span>Nivel de Hype</span>
+                            <span className="text-[#141519]">{hype}%</span>
+                          </div>
+                          <div className="w-full h-2 rounded-full bg-striped-pattern border border-[#EEF1F5] overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-lavender-gradient transition-all duration-300"
+                              style={{ width: `${hype}%` }}
+                            />
+                          </div>
                         </div>
                       </div>
                     );
@@ -1081,6 +1125,19 @@ export const VaultView: React.FC<VaultViewProps> = ({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {filteredItems.map((item) => {
+              const renderEditBtn = () =>
+                onEditItem ? (
+                  <button
+                    type="button"
+                    onClick={() => onEditItem(item)}
+                    title="Editar registro de la Bóveda"
+                    aria-label="Editar registro"
+                    className="w-7 h-7 rounded-full bg-[#F7F9FB] hover:bg-[#141519] text-[#6E7480] hover:text-white border border-[#EEF1F5] flex items-center justify-center transition-colors cursor-pointer shrink-0"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                ) : null;
+
               const renderDeleteBtn = () =>
                 onDeleteItem ? (
                   <button
@@ -1156,6 +1213,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                               <span className="px-2.5 py-0.5 rounded-full bg-[#141519] text-white text-[0.7rem] font-bold tabular-nums">
                                 {item.rating.toFixed(1)} ★
                               </span>
+                              {renderEditBtn()}
                               {renderDeleteBtn()}
                             </div>
                           </div>
@@ -1326,6 +1384,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           <span className="text-[#141519] font-bold tabular-nums">
                             {item.rating.toFixed(1)} ★
                           </span>
+                          {renderEditBtn()}
                           {renderDeleteBtn()}
                         </div>
                       </div>
@@ -1419,6 +1478,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           <span className="px-3 py-1 rounded-full bg-[#141519] text-white text-[0.7rem] font-bold">
                             {item.relationshipTag || 'Vínculo'}
                           </span>
+                          {renderEditBtn()}
                           {renderDeleteBtn()}
                         </div>
                       </div>
@@ -1457,7 +1517,14 @@ export const VaultView: React.FC<VaultViewProps> = ({
                  VARIANTE D: ⏳ PRÓXIMAMENTE (Hype Radar Card Completa)
               ---------------------------------------------------------------- */
               if (item.vaultGroup === 'proximamente') {
-                const hype = item.hypeLevel ?? 100;
+                const hype = Math.min(
+                  100,
+                  Math.max(0, Number(item.hypeLevel ?? 95))
+                );
+                const countdownInfo = getAccurateHypeCountdown(
+                  item.releaseDate,
+                  item.daysRemaining
+                );
                 return (
                   <div
                     key={item.id}
@@ -1466,7 +1533,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     <div>
                       <div className="flex items-start justify-between gap-3 mb-4">
                         <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-14 h-16 rounded-[16px] overflow-hidden shrink-0 border border-[#EEF1F5]">
+                          <div className="w-14 h-20 rounded-[16px] overflow-hidden shrink-0 border border-[#EEF1F5] bg-[#F7F9FB]">
                             <VisualArtwork
                               variant={item.artVariant}
                               accent={item.accent}
@@ -1487,17 +1554,18 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0">
                           {item.imdbRating && (
                             <span className="px-2.5 py-1 rounded-full bg-[#F5C518] text-[#141519] keep-dark-text text-[0.68rem] font-extrabold tabular-nums whitespace-nowrap">
                               IMDb {item.imdbRating} ★
                             </span>
                           )}
                           <span className="px-3 py-1 rounded-full bg-[#141519] text-white text-[0.72rem] font-bold tabular-nums whitespace-nowrap">
-                            {item.daysRemaining
-                              ? `Faltan ${item.daysRemaining}d`
-                              : 'Pronto'}
+                            {countdownInfo.isFuture
+                              ? `Faltan ${countdownInfo.daysRemaining} días`
+                              : 'Ya estrenada'}
                           </span>
+                          {renderEditBtn()}
                           {renderDeleteBtn()}
                         </div>
                       </div>
@@ -1515,14 +1583,12 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
                     <div>
                       <div className="flex items-center justify-between text-[0.74rem] font-bold text-[#141519] mb-1.5 tabular-nums">
-                        <span>
-                          Estreno: {item.releaseDate || 'Por confirmar'}
-                        </span>
+                        <span>Estreno: {countdownInfo.formattedDate}</span>
                         <span>Hype: {hype}%</span>
                       </div>
                       <div className="w-full h-2.5 rounded-full bg-striped-pattern border border-[#EEF1F5] overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-lavender-gradient"
+                          className="h-full rounded-full bg-lavender-gradient transition-all duration-300"
                           style={{ width: `${hype}%` }}
                         />
                       </div>
@@ -1590,6 +1656,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                             <span className="px-2.5 py-0.5 rounded-full bg-[#141519] text-white text-[0.72rem] font-bold tabular-nums flex items-center gap-1">
                               {item.rating.toFixed(1)} ★
                             </span>
+                            {renderEditBtn()}
                             {renderDeleteBtn()}
                           </div>
                         </div>

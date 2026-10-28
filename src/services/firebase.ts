@@ -286,7 +286,7 @@ export async function updateVaultItemDoc(
 ): Promise<void> {
   const payload = sanitizeVaultPayload(userId, item, item.createdAt);
   try {
-    await updateDoc(doc(db, 'vault_items', itemId), payload);
+    await setDoc(doc(db, 'vault_items', itemId), payload);
   } catch (error) {
     handleFirestoreError(
       error,

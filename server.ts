@@ -552,6 +552,7 @@ const TMDB_GENRE_MAP: Record<number, string> = {
 
 app.get("/api/media/tmdb", async (req, res) => {
   const query = String(req.query.q || "").trim();
+  const mode = String(req.query.mode || "").trim();
   const tmdbKey = process.env.TMDB_API_KEY?.trim();
 
   if (!query || !tmdbKey || tmdbKey === "MY_TMDB_API_KEY") {
@@ -581,40 +582,64 @@ app.get("/api/media/tmdb", async (req, res) => {
       return res.json({ enabled: false, results: [] });
     }
 
+    const now = new Date();
+    const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
     const data: any = await response.json();
     const rawResults: any[] = Array.isArray(data?.results) ? data.results : [];
-    const mapped = rawResults
-      .filter(
-        (r) =>
-          (r.media_type === "movie" || r.media_type === "tv") &&
-          (r.title || r.name)
-      )
-      .slice(0, 6)
-      .map((r) => {
-        const isTv = r.media_type === "tv";
-        const rawDate = r.release_date || r.first_air_date || "";
-        const year = rawDate ? rawDate.slice(0, 4) : "";
-        const genres = Array.isArray(r.genre_ids)
-          ? r.genre_ids
-              .map((id: number) => TMDB_GENRE_MAP[id])
-              .filter(Boolean)
-              .slice(0, 3)
-          : [];
-        return {
-          id: `tmdb-${r.id}`,
-          title: r.title || r.name,
-          creator: isTv ? "Serie TV · TMDB" : "Película · TMDB",
-          year,
-          releaseDate: rawDate,
-          imageUrl: r.poster_path
-            ? `https://image.tmdb.org/t/p/w500${r.poster_path}`
-            : undefined,
-          tags: genres.length > 0 ? genres : [isTv ? "Serie" : "Cine"],
-          mediaType: isTv ? "series" : "movie",
-          sourceLabel: "TMDB",
-          overview: r.overview || "",
-        };
+    const filtered = rawResults.filter(
+      (r) =>
+        (r.media_type === "movie" || r.media_type === "tv") &&
+        (r.title || r.name)
+    );
+
+    if (mode === "upcoming") {
+      filtered.sort((a, b) => {
+        const dateA = String(a.release_date || a.first_air_date || "");
+        const dateB = String(b.release_date || b.first_air_date || "");
+        const futureA = dateA > todayIso ? 1 : 0;
+        const futureB = dateB > todayIso ? 1 : 0;
+        if (futureA !== futureB) return futureB - futureA;
+        return dateB.localeCompare(dateA);
       });
+    }
+
+    const mapped = filtered.slice(0, 8).map((r) => {
+      const isTv = r.media_type === "tv";
+      const rawDate = r.release_date || r.first_air_date || "";
+      const year = rawDate ? rawDate.slice(0, 4) : "";
+      const genres = Array.isArray(r.genre_ids)
+        ? r.genre_ids
+            .map((id: number) => TMDB_GENRE_MAP[id])
+            .filter(Boolean)
+            .slice(0, 3)
+        : [];
+      const isFutureRelease = Boolean(rawDate && rawDate > todayIso);
+      const isPastRelease = Boolean(rawDate && rawDate <= todayIso);
+
+      return {
+        id: `tmdb-${r.id}`,
+        title: r.title || r.name,
+        creator: isTv ? "Serie TV · TMDB" : "Película · TMDB",
+        year,
+        releaseDate: rawDate,
+        rawReleaseDate: rawDate || undefined,
+        isFutureRelease,
+        isPastRelease,
+        releaseStatus: isFutureRelease
+          ? "upcoming"
+          : isPastRelease
+          ? "released"
+          : "unknown",
+        imageUrl: r.poster_path
+          ? `https://image.tmdb.org/t/p/w500${r.poster_path}`
+          : undefined,
+        tags: genres.length > 0 ? genres : [isTv ? "Serie" : "Cine"],
+        mediaType: isTv ? "series" : "movie",
+        sourceLabel: "TMDB",
+        overview: r.overview || "",
+      };
+    });
 
     return res.json({ enabled: true, results: mapped });
   } catch {
