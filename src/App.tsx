@@ -69,7 +69,10 @@ import {
 } from './components/ModuleViews';
 import { GeminiActionHub } from './components/GeminiActionHub';
 import { QuickCreateModal } from './components/QuickCreateModal';
+import { MediaPreviewModal } from './components/MediaPreviewModal';
 import {
+  FloatingToastAlert,
+  FloatingToastBanner,
   NotificationItem,
   NotificationsPopover,
   UserProfile,
@@ -114,6 +117,7 @@ import {
   computeReleaseCountdown,
   findBestMediaMatch,
   getAccurateHypeCountdown,
+  MediaSearchResult,
 } from './services/mediaSearchService';
 import {
   completeSpotifyPkceHandshake,
@@ -138,6 +142,8 @@ const LS_KEYS = {
   tasks: 'lifeos_prod_tasks_v1',
   activity: 'lifeos_prod_activity_v1',
   conversations: 'lifeos_prod_conversations_v1',
+  notifications: 'lifeos_prod_notifications_v1',
+  emittedAlerts: 'lifeos_prod_emitted_alerts_v1',
 };
 
 function readLocalBackup<T>(key: string, fallback: T): T {
@@ -211,7 +217,11 @@ export default function App() {
     }
   });
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notifications, setNotifications] = useState<NotificationItem[]>(() =>
+    readLocalBackup(LS_KEYS.notifications, [])
+  );
+  const [floatingToast, setFloatingToast] =
+    useState<FloatingToastAlert | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<UserProfile>({
     name: 'Joaquim',
@@ -228,6 +238,14 @@ export default function App() {
   const [editingVaultItem, setEditingVaultItem] = useState<VaultItem | null>(
     null
   );
+  const [previewMediaState, setPreviewMediaState] = useState<{
+    vaultItem?: VaultItem | null;
+    searchResult?: MediaSearchResult | null;
+    onSelectSearchResult?: (
+      selected: MediaSearchResult,
+      targetGroup?: Exclude<VaultFilterId, 'todo'>
+    ) => void;
+  } | null>(null);
   const [defaultVaultGroup, setDefaultVaultGroup] = useState<
     Exclude<VaultFilterId, 'todo'>
   >('peliculas_series');
@@ -283,10 +301,13 @@ export default function App() {
       title: string,
       description: string,
       category: NotificationItem['category'],
-      targetTab: TabId
+      targetTab: TabId,
+      badge?: string,
+      triggerToast = true
     ) => {
+      const id = `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
       const newNotif: NotificationItem = {
-        id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id,
         title,
         description,
         time: new Date().toLocaleTimeString('es-ES', {
@@ -296,11 +317,125 @@ export default function App() {
         read: false,
         category,
         targetTab,
+        badge,
       };
-      setNotifications((prev) => [newNotif, ...prev]);
+      setNotifications((prev) => [newNotif, ...prev].slice(0, 50));
+
+      if (triggerToast) {
+        const toastObj: FloatingToastAlert = {
+          id,
+          title,
+          description,
+          category,
+          targetTab,
+          badge,
+        };
+        setFloatingToast(toastObj);
+        setTimeout(() => {
+          setFloatingToast((prev) => (prev?.id === id ? null : prev));
+        }, 4200);
+      }
     },
     []
   );
+
+  // Persist Bell Notifications history across reloads
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        LS_KEYS.notifications,
+        JSON.stringify(notifications)
+      );
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [notifications]);
+
+  // Automatic Hype Radar & Agenda proximity notifications into the Bell Center
+  useEffect(() => {
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const emittedMap = readLocalBackup<Record<string, boolean>>(
+      LS_KEYS.emittedAlerts,
+      {}
+    );
+    let updatedEmitted = false;
+    const newAlerts: NotificationItem[] = [];
+    const nowTime = new Date().toLocaleTimeString('es-ES', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    vault
+      .filter((item) => item.vaultGroup === 'proximamente')
+      .forEach((item) => {
+        const countdown = getAccurateHypeCountdown(
+          item.releaseDate,
+          item.daysRemaining
+        );
+        if (countdown.daysRemaining >= 0 && countdown.daysRemaining <= 7) {
+          const alertKey = `hype_${item.id}_${todayIso}`;
+          if (!emittedMap[alertKey]) {
+            emittedMap[alertKey] = true;
+            updatedEmitted = true;
+            newAlerts.push({
+              id: `notif-auto-hype-${item.id}-${Date.now()}`,
+              title:
+                countdown.daysRemaining === 0
+                  ? `¡Hoy se estrena ${item.title}!`
+                  : `Hype Radar: ${item.title}`,
+              description:
+                countdown.daysRemaining === 0
+                  ? `Estreno programado para hoy (${countdown.formattedDate}).`
+                  : `Faltan ${countdown.daysRemaining} ${
+                      countdown.daysRemaining === 1 ? 'día' : 'días'
+                    } para su lanzamiento (${countdown.formattedDate}).`,
+              time: nowTime,
+              read: false,
+              category: 'vault',
+              targetTab: 'vault',
+              badge:
+                countdown.daysRemaining === 0
+                  ? '¡Estreno Hoy!'
+                  : `Faltan ${countdown.daysRemaining}d`,
+            });
+          }
+        }
+      });
+
+    const todayEvents = schedule.filter((b) => b.dayOfMonth === todayDateNum);
+    if (todayEvents.length > 0) {
+      const firstEv = todayEvents[0];
+      const calKey = `cal_${todayIso}_${firstEv.id}`;
+      if (!emittedMap[calKey]) {
+        emittedMap[calKey] = true;
+        updatedEmitted = true;
+        newAlerts.push({
+          id: `notif-auto-cal-${firstEv.id}-${Date.now()}`,
+          title: `Agenda de hoy: ${firstEv.title}`,
+          description: `Tienes ${todayEvents.length} ${
+            todayEvents.length === 1 ? 'evento programado' : 'eventos programados'
+          } hoy (${firstEv.time}).`,
+          time: nowTime,
+          read: false,
+          category: 'calendar',
+          targetTab: 'calendar',
+          badge: 'Agenda Hoy',
+        });
+      }
+    }
+
+    if (updatedEmitted && newAlerts.length > 0) {
+      try {
+        localStorage.setItem(
+          LS_KEYS.emittedAlerts,
+          JSON.stringify(emittedMap)
+        );
+      } catch {
+        // ignore storage errors
+      }
+      setNotifications((prev) => [...newAlerts, ...prev].slice(0, 50));
+    }
+  }, [vault, schedule, todayDateNum]);
 
   // Sync dark mode class with document.body
   useEffect(() => {
@@ -636,9 +771,12 @@ export default function App() {
     );
     pushActivityAlert(
       `${isSports ? `+${hours} Entreno` : `+${hours}h`} · ${targetSkill.name}`,
-      `Guardado en ${authUser ? 'Firestore (skills_rpg & daily_hours)' : 'memoria local'}.`,
+      `Progreso: ${nextProgress}% XP (Lv. ${nextLevel}). Guardado en ${
+        authUser ? 'Firestore' : 'memoria local'
+      }.`,
       'skills',
-      'skills'
+      'skills',
+      leveledUp ? `¡Subiste a Lv. ${nextLevel}!` : `Lv. ${nextLevel}`
     );
   };
 
@@ -653,6 +791,9 @@ export default function App() {
       day: '2-digit',
       month: 'short',
     });
+    const targetMilestone = targetSkill.milestones.find(
+      (m) => m.id === milestoneId
+    );
     const updatedMilestones = targetSkill.milestones.map((m) =>
       m.id === milestoneId
         ? { ...m, unlocked: !m.unlocked, date: todayLabel }
@@ -673,6 +814,17 @@ export default function App() {
       );
     }
     showNotification('Bitácora de hitos actualizada');
+    pushActivityAlert(
+      `Hito actualizado · ${targetSkill.name}`,
+      targetMilestone
+        ? `"${targetMilestone.title}" (${
+            !targetMilestone.unlocked ? 'Completado' : 'Reabierto'
+          })`
+        : 'Progreso de bitácora actualizado (+10% XP).',
+      'skills',
+      'skills',
+      'Bitácora RPG'
+    );
   };
 
   const handleAddMilestone = async (
@@ -710,6 +862,13 @@ export default function App() {
       );
     }
     showNotification(`Nuevo récord guardado: "${title}"`);
+    pushActivityAlert(
+      `Nuevo récord en ${targetSkill.name}`,
+      `"${title}" añadido a tu bitácora personal (+10% XP).`,
+      'skills',
+      'skills',
+      badge || 'Nuevo Récord'
+    );
   };
 
   const handleAddSavings = async (itemId: string, amount: number) => {
@@ -729,6 +888,13 @@ export default function App() {
       );
     }
     showNotification(`Abonaste +$${amount} USD a "${target.name}"`);
+    pushActivityAlert(
+      `Ahorro abonado: +$${amount} USD`,
+      `"${target.name}" ahora tiene $${nextSaved} / $${target.estimatedPrice} USD acumulados.`,
+      'wishlist',
+      'wishlist',
+      'Wishlist'
+    );
   };
 
   const handleUpdateSavingsPool = async (nextPool: number) => {
@@ -737,6 +903,16 @@ export default function App() {
     if (authUser) {
       await saveWishlistSettingsDoc(authUser.uid, cleanPool);
     }
+    showNotification(
+      `Fondo de Ahorro Disponible actualizado a $${cleanPool} USD`
+    );
+    pushActivityAlert(
+      `Fondo de Ahorro: $${cleanPool} USD`,
+      'El presupuesto inteligente de tu Wishlist se ha recalculado.',
+      'wishlist',
+      'wishlist',
+      'Presupuesto'
+    );
   };
 
   const handleTogglePurchased = async (itemId: string) => {
@@ -765,9 +941,22 @@ export default function App() {
         ? `¡"${target.name}" marcado como comprado!`
         : `"${target.name}" devuelto a pendientes`
     );
+    pushActivityAlert(
+      isNowPurchased
+        ? `¡Meta adquirida!: ${target.name}`
+        : `Meta reactivada: ${target.name}`,
+      isNowPurchased
+        ? `Completaste la compra de "${target.name}" ($${target.estimatedPrice} USD).`
+        : `"${target.name}" volvió a tu lista de deseos pendientes.`,
+      'wishlist',
+      'wishlist',
+      isNowPurchased ? '¡Comprado!' : 'Pendiente'
+    );
   };
 
   const handleToggleScheduleBlock = (blockId: string) => {
+    const targetBlock = schedule.find((b) => b.id === blockId);
+    const nextDone = targetBlock ? targetBlock.completion !== 100 : true;
     setSchedule((prev) =>
       prev.map((b) =>
         b.id === blockId
@@ -775,6 +964,22 @@ export default function App() {
           : b
       )
     );
+    if (targetBlock) {
+      showNotification(
+        nextDone
+          ? `Bloque "${targetBlock.title}" completado`
+          : `Bloque "${targetBlock.title}" reabierto`
+      );
+      pushActivityAlert(
+        nextDone
+          ? `Evento completado: ${targetBlock.title}`
+          : `Evento en curso: ${targetBlock.title}`,
+        `Horario ${targetBlock.time} · Día ${targetBlock.dayOfMonth}.`,
+        'calendar',
+        'calendar',
+        nextDone ? 'Completado' : 'Cronograma'
+      );
+    }
   };
 
   // Manual Creation & Editing Handlers (Modals)
@@ -794,10 +999,15 @@ export default function App() {
     setEditingVaultItem(null);
     showNotification(`"${newItem.title}" guardado en tu Bóveda`);
     pushActivityAlert(
-      `Nuevo registro en Bóveda: ${newItem.title}`,
-      `${newItem.category} · ${newItem.rating}/10 (Tier ${newItem.tier}).`,
+      `Nuevo en Bóveda: ${newItem.title}`,
+      newItem.vaultGroup === 'proximamente'
+        ? `Añadido al Hype Radar · Estreno: ${
+            newItem.releaseDate || 'Próximamente'
+          }.`
+        : `${newItem.category} · ${newItem.rating}/10 (Tier ${newItem.tier}).`,
       'vault',
-      'vault'
+      'vault',
+      newItem.vaultGroup === 'proximamente' ? 'Hype Radar' : `Tier ${newItem.tier}`
     );
   };
 
@@ -812,10 +1022,11 @@ export default function App() {
     setEditingVaultItem(null);
     showNotification(`Cambios actualizados en "${updatedItem.title}"`);
     pushActivityAlert(
-      `Registro actualizado en Bóveda: ${updatedItem.title}`,
+      `Bóveda actualizada: ${updatedItem.title}`,
       `${updatedItem.category} · ${updatedItem.rating}/10 (Tier ${updatedItem.tier}).`,
       'vault',
-      'vault'
+      'vault',
+      'Editado'
     );
   };
 
@@ -829,9 +1040,12 @@ export default function App() {
     showNotification(`Habilidad "${newSkill.name}" creada`);
     pushActivityAlert(
       `Nueva Habilidad RPG: ${newSkill.name}`,
-      `Lv. ${newSkill.level} · Rama ${newSkill.branch === 'sports' ? 'Deporte' : 'Aprendizaje'}.`,
+      `Lv. ${newSkill.level} · Rama ${
+        newSkill.branch === 'sports' ? 'Deporte' : 'Aprendizaje'
+      }.`,
       'skills',
-      'skills'
+      'skills',
+      `Lv. ${newSkill.level}`
     );
   };
 
@@ -843,6 +1057,13 @@ export default function App() {
       setWishlist((prev) => [created, ...prev]);
     }
     showNotification(`"${newWish.name}" añadido a tu Wishlist`);
+    pushActivityAlert(
+      `Nuevo en Wishlist: ${newWish.name}`,
+      `Meta $${newWish.estimatedPrice} USD · Prioridad ${newWish.priority}.`,
+      'wishlist',
+      'wishlist',
+      `Prioridad ${newWish.priority}`
+    );
   };
 
   const handleCreateSchedule = async (newBlock: Omit<ScheduleBlock, 'id'>) => {
@@ -868,6 +1089,13 @@ export default function App() {
         showNotification(
           `Evento "${newBlock.title}" creado en Google Calendar`
         );
+        pushActivityAlert(
+          `Evento agendado: ${newBlock.title}`,
+          `Día ${newBlock.dayOfMonth} · ${newBlock.time} (Google Calendar Sync).`,
+          'calendar',
+          'calendar',
+          'Google Calendar'
+        );
         return;
       } catch {
         // Fallback to local schedule state if token expired
@@ -877,6 +1105,13 @@ export default function App() {
     const created: ScheduleBlock = { ...newBlock, id: `sch-${Date.now()}` };
     setSchedule((prev) => [...prev, created]);
     showNotification(`Bloque "${created.title}" agendado en tu Cronograma`);
+    pushActivityAlert(
+      `Evento agendado: ${created.title}`,
+      `Día ${created.dayOfMonth} · ${created.time} en tu Cronograma Aether.`,
+      'calendar',
+      'calendar',
+      `Día ${created.dayOfMonth}`
+    );
   };
 
   // Assistant Conversation History Handlers (Firestore + local backup)
@@ -916,6 +1151,13 @@ export default function App() {
         const createdTask = await createGoogleTaskItem({ title, notes });
         setGoogleTasks((prev) => [createdTask, ...prev]);
         showNotification(`Tarea "${title}" creada en Google Tasks`);
+        pushActivityAlert(
+          `Nueva tarea: ${title}`,
+          notes || 'Sincronizada con tu lista de Google Tasks.',
+          'calendar',
+          'calendar',
+          'Google Tasks'
+        );
         return;
       } catch {
         // fallback below
@@ -929,6 +1171,13 @@ export default function App() {
     };
     setGoogleTasks((prev) => [localTask, ...prev]);
     showNotification(`Tarea "${title}" agregada a tu lista`);
+    pushActivityAlert(
+      `Nueva tarea pendiente: ${title}`,
+      notes || 'Añadida al Daily Brief y lista de tareas del día.',
+      'calendar',
+      'calendar',
+      'Por hacer'
+    );
   };
 
   const handleToggleGoogleTask = async (task: GoogleTaskItem) => {
@@ -940,6 +1189,22 @@ export default function App() {
           ? { ...t, status: nextCompleted ? 'completed' : 'needsAction' }
           : t
       )
+    );
+    showNotification(
+      nextCompleted
+        ? `¡Tarea "${task.title}" completada!`
+        : `Tarea "${task.title}" marcada como pendiente`
+    );
+    pushActivityAlert(
+      nextCompleted
+        ? `Tarea completada: ${task.title}`
+        : `Tarea reabierta: ${task.title}`,
+      nextCompleted
+        ? 'Excelente avance en tus objetivos del día.'
+        : 'Devuelta a tus tareas pendientes del día.',
+      'calendar',
+      'calendar',
+      nextCompleted ? '¡Completada!' : 'Pendiente'
     );
     if (token && !task.id.startsWith('task-')) {
       try {
@@ -963,6 +1228,13 @@ export default function App() {
           setVault((prev) => prev.filter((v) => v.id !== item.id));
         }
         showNotification(`"${item.title}" eliminado de la Bóveda`);
+        pushActivityAlert(
+          `Eliminado de Bóveda: ${item.title}`,
+          `El registro de ${item.category} fue eliminado.`,
+          'vault',
+          'vault',
+          'Eliminado'
+        );
       },
     });
   };
@@ -979,6 +1251,13 @@ export default function App() {
           setSkills((prev) => prev.filter((s) => s.id !== skill.id));
         }
         showNotification(`Habilidad "${skill.name}" eliminada`);
+        pushActivityAlert(
+          `Habilidad eliminada: ${skill.name}`,
+          'Se quitó del árbol de habilidades RPG.',
+          'skills',
+          'skills',
+          'Eliminado'
+        );
       },
     });
   };
@@ -994,6 +1273,13 @@ export default function App() {
           setWishlist((prev) => prev.filter((w) => w.id !== item.id));
         }
         showNotification(`"${item.name}" eliminado de tu Wishlist`);
+        pushActivityAlert(
+          `Eliminado de Wishlist: ${item.name}`,
+          'Se quitó del catálogo de metas materiales.',
+          'wishlist',
+          'wishlist',
+          'Eliminado'
+        );
       },
     });
   };
@@ -1015,6 +1301,13 @@ export default function App() {
         }
         setSchedule((prev) => prev.filter((b) => b.id !== block.id));
         showNotification(`Evento "${block.title}" eliminado`);
+        pushActivityAlert(
+          `Evento eliminado: ${block.title}`,
+          `Se quitó el bloque de las ${block.time}.`,
+          'calendar',
+          'calendar',
+          'Eliminado'
+        );
       },
     });
   };
@@ -1034,6 +1327,13 @@ export default function App() {
         }
         setGoogleTasks((prev) => prev.filter((t) => t.id !== task.id));
         showNotification(`Tarea "${task.title}" eliminada`);
+        pushActivityAlert(
+          `Tarea eliminada: ${task.title}`,
+          'Se eliminó de tu lista de pendientes.',
+          'calendar',
+          'calendar',
+          'Eliminado'
+        );
       },
     });
   };
@@ -1343,6 +1643,19 @@ export default function App() {
             prev.map((d) => (d.dateNum === todayDateNum ? updatedDayObj : d))
           );
         }
+
+        showNotification(
+          `Asistente IA: +${durationLabel} en "${existing.name}"`
+        );
+        pushActivityAlert(
+          `IA · ${existing.name} (+${durationLabel})`,
+          args.newMilestone
+            ? `Hito: "${args.newMilestone}" · Lv. ${nextLevel} (${nextProg}% XP).`
+            : `Progreso actualizado a ${nextProg}% XP (Lv. ${nextLevel}).`,
+          'skills',
+          'skills',
+          'Asistente IA'
+        );
 
         return {
           name: 'updateOrCreateSkill',
@@ -2305,7 +2618,9 @@ export default function App() {
                               {nearestHypeRadarItems.map(({ item, countdown }) => (
                                 <div
                                   key={item.id}
-                                  onClick={() => setActiveTab('vault')}
+                                  onClick={() =>
+                                    setPreviewMediaState({ vaultItem: item })
+                                  }
                                   className="p-2 rounded-[14px] bg-[#FFFFFF] border border-[#EEF1F5] flex items-center justify-between gap-2.5 cursor-pointer hover:border-[#BBC6F8] transition-colors"
                                 >
                                   <div className="flex items-center gap-2.5 min-w-0">
@@ -2506,7 +2821,9 @@ export default function App() {
                       return (
                         <div
                           key={item.id}
-                          onClick={() => setActiveTab('vault')}
+                          onClick={() =>
+                            setPreviewMediaState({ vaultItem: item })
+                          }
                           className="p-3.5 rounded-[20px] bg-lavender-gradient border-2 border-white/75 text-[#141519] keep-dark-text cursor-pointer transition-transform hover:scale-[1.01] shadow-2xs"
                         >
                           <div className="flex items-center justify-between gap-3 mb-2.5">
@@ -2662,7 +2979,9 @@ export default function App() {
                         return (
                           <div
                             key={item.id}
-                            onClick={() => setActiveTab('vault')}
+                            onClick={() =>
+                              setPreviewMediaState({ vaultItem: item })
+                            }
                             className={`p-2.5 rounded-[16px] hover:bg-[#F7F9FB] border transition-all cursor-pointer ${
                               isUpcoming
                                 ? 'bg-[#F7F9FB]/75 border-[#EEF1F5] flex flex-col gap-2'
@@ -2937,6 +3256,10 @@ export default function App() {
               setCreateModalMode('vault');
             }}
             onOpenAssistant={() => setIsAssistantOpen(true)}
+            onPreviewItem={(item) => setPreviewMediaState({ vaultItem: item })}
+            onPreviewSearchResult={(resItem) =>
+              setPreviewMediaState({ searchResult: resItem })
+            }
             onEditItem={handleOpenEditVault}
             onDeleteItem={requestDeleteVaultItem}
             spotifyProfile={spotifyProfile}
@@ -3051,6 +3374,7 @@ export default function App() {
         onDeleteConversation={handleDeleteAssistantConversation}
         onExecuteAction={handleExecuteAiAction}
         onNavigateTab={setActiveTab}
+        onPreviewMedia={(payload) => setPreviewMediaState(payload)}
       />
 
       <QuickCreateModal
@@ -3066,6 +3390,104 @@ export default function App() {
         onAddSkill={handleCreateSkill}
         onAddWishlist={handleCreateWishlist}
         onAddSchedule={handleCreateSchedule}
+        onPreviewSearchResult={(resItem, onSelectFromPreview) =>
+          setPreviewMediaState({
+            searchResult: resItem,
+            onSelectSearchResult: onSelectFromPreview,
+          })
+        }
+      />
+
+      <MediaPreviewModal
+        vaultItem={previewMediaState?.vaultItem || null}
+        searchResult={previewMediaState?.searchResult || null}
+        onClose={() => setPreviewMediaState(null)}
+        onUpdateVaultItem={async (updated) => {
+          await handleUpdateVault(updated);
+          setPreviewMediaState((prev) =>
+            prev?.vaultItem ? { ...prev, vaultItem: updated } : prev
+          );
+        }}
+        onEditFullVaultItem={(item) => {
+          setPreviewMediaState(null);
+          handleOpenEditVault(item);
+        }}
+        onDeleteVaultItem={(item) => {
+          setPreviewMediaState(null);
+          requestDeleteVaultItem(item);
+        }}
+        onSelectSearchResult={async (resItem, targetGroup) => {
+          if (previewMediaState?.onSelectSearchResult) {
+            previewMediaState.onSelectSearchResult(resItem, targetGroup);
+            setPreviewMediaState(null);
+            return;
+          }
+          const group: Exclude<VaultFilterId, 'todo'> =
+            targetGroup ||
+            (resItem.mediaType === 'song' || resItem.mediaType === 'album'
+              ? 'musica'
+              : resItem.isFutureRelease
+              ? 'proximamente'
+              : 'peliculas_series');
+          const todayFormatted = new Date().toLocaleDateString('es-ES', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          });
+          const calc = resItem.rawReleaseDate
+            ? computeReleaseCountdown(resItem.rawReleaseDate)
+            : null;
+          await handleCreateVault({
+            title: resItem.title,
+            creator: resItem.creator || 'Director / Creador',
+            category:
+              group === 'proximamente'
+                ? 'Próximamente'
+                : group === 'musica'
+                ? 'Música'
+                : resItem.mediaType === 'series'
+                ? 'Serie'
+                : 'Cine',
+            vaultGroup: group,
+            rating: 9.5,
+            tier: 'S',
+            consumedDate: group === 'proximamente' ? 'En Espera' : todayFormatted,
+            tags:
+              resItem.tags && resItem.tags.length > 0
+                ? resItem.tags.slice(0, 4)
+                : ['Favorito'],
+            review:
+              resItem.plot ||
+              resItem.overview ||
+              `Obra de ${resItem.creator} guardada desde la vista previa interactiva.`,
+            accent: group === 'proximamente' ? 'lavender' : 'mint',
+            artVariant: group === 'musica' ? 'synth' : 'cyberpunk',
+            isFeaturedMasterpiece: group !== 'proximamente',
+            imageUrl: resItem.imageUrl,
+            audioPreviewUrl: resItem.audioPreviewUrl,
+            releaseYear: resItem.year,
+            imdbId: resItem.imdbId,
+            imdbRating: resItem.imdbRating,
+            imdbVotes: resItem.imdbVotes,
+            actors: resItem.actors,
+            plot: resItem.plot || resItem.overview,
+            releaseDate:
+              group === 'proximamente'
+                ? calc?.formattedDate || resItem.releaseDate || 'Próximamente'
+                : undefined,
+            daysRemaining:
+              group === 'proximamente'
+                ? calc?.daysRemaining ?? resItem.daysRemaining ?? 30
+                : undefined,
+            hypeLevel: group === 'proximamente' ? 95 : undefined,
+            releaseFormat:
+              group === 'proximamente'
+                ? resItem.releaseFormat || 'Cines / Streaming'
+                : undefined,
+            videoUrl: resItem.videoUrl,
+          });
+          setPreviewMediaState(null);
+        }}
       />
 
       <UserProfileModal
@@ -3176,6 +3598,16 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Floating Toast Notification Banner (Soft Bento Pastel & Charcoal) */}
+      <FloatingToastBanner
+        toast={floatingToast}
+        onClose={() => setFloatingToast(null)}
+        onSelectToast={(t) => {
+          setActiveTab(t.targetTab);
+          setFloatingToast(null);
+        }}
+      />
     </div>
   );
 }

@@ -20,9 +20,14 @@ import {
   History,
   Plus,
   MessageSquare,
+  Eye,
+  Hourglass,
+  Star,
 } from 'lucide-react';
 import {
   AssistantConversation,
+  AssistantPendingConfirmation,
+  AssistantPendingMediaCandidate,
   ChatMessage,
   SkillItem,
   VaultItem,
@@ -30,11 +35,17 @@ import {
   ScheduleBlock,
   AssistantActionRecord,
   TabId,
+  VaultFilterId,
 } from '../types/lifeOs';
 import {
   parseNaturalLanguageCommand,
   buildContextualReply,
 } from '../services/assistantParser';
+import {
+  findBestMediaMatch,
+  MediaSearchResult,
+  searchMediaByCategory,
+} from '../services/mediaSearchService';
 
 interface GeminiActionHubProps {
   isOpen: boolean;
@@ -54,6 +65,10 @@ interface GeminiActionHubProps {
     args: any;
   }) => Promise<AssistantActionRecord | null>;
   onNavigateTab: (tab: TabId) => void;
+  onPreviewMedia?: (payload: {
+    vaultItem?: VaultItem;
+    searchResult?: MediaSearchResult;
+  }) => void;
 }
 
 const INITIAL_MESSAGES: ChatMessage[] = [
@@ -67,10 +82,10 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 ];
 
 const QUICK_PROMPTS = [
+  'Quiero agregar Joe Black a mi Bóveda',
   'Guarda la película Interstellar con nota 9.5 en la Bóveda',
   'Añade el álbum Random Access Memories de Daft Punk a mi música',
   'Regístrame 45 minutos de práctica de básquet con 3 triples anotados y +50 XP',
-  'Agéndame un partido de fútbol este viernes a las 6 pm',
 ];
 
 const BAR_COUNT = 34;
@@ -128,6 +143,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
   onDeleteConversation,
   onExecuteAction,
   onNavigateTab,
+  onPreviewMedia,
 }) => {
   const [activeConversationId, setActiveConversationId] = useState<string>(
     () => `conv-${Date.now()}`
@@ -322,7 +338,6 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
   };
 
   const startVoiceMode = () => {
-    // Clear any existing input text and enter Gemini Voice Bar mode
     setInput('');
     if (inputRef.current) {
       inputRef.current.value = '';
@@ -453,6 +468,129 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
     }
   };
 
+  const persistThread = async (thread: ChatMessage[], fallbackTitle: string) => {
+    const existingConv = conversations.find(
+      (c) => c.id === activeConversationId
+    );
+    const firstUserMsg = thread.find((m) => m.role === 'user');
+    const rawTitle =
+      existingConv?.title || firstUserMsg?.content || fallbackTitle;
+    const cleanTitle =
+      rawTitle.length > 44 ? `${rawTitle.slice(0, 44)}...` : rawTitle;
+
+    const updatedConv: AssistantConversation = {
+      id: activeConversationId,
+      title: cleanTitle,
+      createdAt: existingConv?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      messages: thread,
+    };
+    await onSaveConversation(updatedConv);
+  };
+
+  // Handler when the user clicks "Sí, confirmar" (or picks an alternative candidate) on a Double Confirmation card
+  const handleConfirmPendingAction = async (
+    messageId: string,
+    pending: AssistantPendingConfirmation,
+    overrideCandidate?: AssistantPendingMediaCandidate,
+    overrideVaultGroup?: Exclude<VaultFilterId, 'todo'>
+  ) => {
+    if (isLoading) return;
+    setIsLoading(true);
+    try {
+      const chosen = overrideCandidate || pending.matchedMedia;
+      const targetGroup =
+        overrideVaultGroup ||
+        pending.originalAction.args?.vaultGroup ||
+        'peliculas_series';
+
+      const enrichedAction = {
+        name: pending.originalAction.name,
+        args: {
+          ...pending.originalAction.args,
+          title: chosen.title,
+          creator: chosen.creator || pending.originalAction.args?.creator,
+          imdbId: chosen.imdbId || pending.originalAction.args?.imdbId,
+          vaultGroup: targetGroup,
+          category:
+            targetGroup === 'proximamente'
+              ? 'Próximamente'
+              : targetGroup === 'musica'
+              ? 'Música'
+              : chosen.mediaType === 'series'
+              ? 'Serie'
+              : 'Cine',
+          tags:
+            chosen.tags && chosen.tags.length > 0
+              ? chosen.tags
+              : pending.originalAction.args?.tags,
+          review:
+            pending.originalAction.args?.review || chosen.plot || undefined,
+          releaseDate:
+            chosen.releaseDate || pending.originalAction.args?.releaseDate,
+        },
+      };
+
+      const record = await onExecuteAction(enrichedAction);
+      const confirmReply = `¡Confirmado! He guardado "${chosen.title}"${
+        chosen.year ? ` (${chosen.year})` : ''
+      } en tu ${
+        targetGroup === 'proximamente'
+          ? 'Hype Radar (Próximamente)'
+          : 'Bóveda de Experiencias'
+      }.`;
+
+      const nextThread = messages.map((m) =>
+        m.id === messageId
+          ? {
+              ...m,
+              content: confirmReply,
+              pendingConfirmation: {
+                ...pending,
+                matchedMedia: chosen,
+                status: 'confirmed' as const,
+              },
+              actionsTaken: record ? [record] : m.actionsTaken,
+            }
+          : m
+      );
+
+      setMessages(nextThread);
+      triggerAssistantSpeakingWave(confirmReply);
+      await persistThread(nextThread, chosen.title);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handler when the user clicks "No, buscar otra" on a Double Confirmation card
+  const handleRejectPendingAction = async (
+    messageId: string,
+    pending: AssistantPendingConfirmation
+  ) => {
+    const hasAlts =
+      Array.isArray(pending.alternatives) && pending.alternatives.length > 0;
+    const rejectReply = hasAlts
+      ? 'Entendido, no la he guardado. Aquí tienes otras coincidencias encontradas, o dime el año o director exacto:'
+      : 'Entendido, he cancelado el registro. Dime el título más específico, el año o el director de la obra que buscas.';
+
+    const nextThread = messages.map((m) =>
+      m.id === messageId
+        ? {
+            ...m,
+            content: rejectReply,
+            pendingConfirmation: {
+              ...pending,
+              status: 'cancelled' as const,
+            },
+          }
+        : m
+    );
+
+    setMessages(nextThread);
+    await persistThread(nextThread, 'Búsqueda en Bóveda');
+  };
+
   const handleSend = async (promptText?: string) => {
     const rawValue =
       promptText !== undefined
@@ -472,6 +610,45 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
     setIsVoiceMode(false);
     setIsAiSpeaking(false);
     setIsHistoryOpen(false);
+
+    // Check if the user is replying "Sí / Confirmar" or "No" to an active pending confirmation
+    const lastPendingMsg = [...messages]
+      .reverse()
+      .find(
+        (m) =>
+          m.role === 'assistant' &&
+          m.pendingConfirmation &&
+          m.pendingConfirmation.status === 'pending'
+      );
+
+    if (lastPendingMsg && lastPendingMsg.pendingConfirmation) {
+      const normalizedReply = textToSend.toLowerCase();
+      const isAffirmative =
+        /^(?:s[ií]|sip|claro|confirmo|confirmar|esa\s+es|esa\s+misma|dale|ok|vale|guardar|agrega\s+esa|s[ií]\s*,?\s*confirmar)\b/i.test(
+          normalizedReply
+        );
+      const isNegative =
+        /^(?:no|nop|otra|buscar\s+otra|esa\s+no|cancelar)\b/i.test(
+          normalizedReply
+        );
+
+      if (isAffirmative) {
+        isSubmittingRef.current = false;
+        await handleConfirmPendingAction(
+          lastPendingMsg.id,
+          lastPendingMsg.pendingConfirmation
+        );
+        return;
+      }
+      if (isNegative) {
+        isSubmittingRef.current = false;
+        await handleRejectPendingAction(
+          lastPendingMsg.id,
+          lastPendingMsg.pendingConfirmation
+        );
+        return;
+      }
+    }
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -545,7 +722,104 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
       }
 
       const executedRecords: AssistantActionRecord[] = [];
+      let pendingConfirmationData: AssistantPendingConfirmation | undefined;
+
       for (const act of rawActions) {
+        const vaultGroup: Exclude<VaultFilterId, 'todo'> =
+          act.args?.vaultGroup || 'peliculas_series';
+
+        // Smart Double Confirmation for Vault Media (Películas, Series, Próximamente, Música)
+        const isMediaVaultAction =
+          act.name === 'addVaultItem' &&
+          (vaultGroup === 'peliculas_series' ||
+            vaultGroup === 'proximamente' ||
+            vaultGroup === 'musica');
+
+        if (isMediaVaultAction && !pendingConfirmationData) {
+          const rawTitle = String(act.args?.title || '').trim();
+          const [bestMatch, catalogMatches] = await Promise.all([
+            findBestMediaMatch(
+              rawTitle,
+              vaultGroup,
+              act.args?.category,
+              act.args?.imdbId,
+              act.args?.creator
+            ),
+            searchMediaByCategory(rawTitle, vaultGroup, true),
+          ]);
+
+          const primary = bestMatch || catalogMatches[0];
+          if (primary) {
+            const matchedCandidate: AssistantPendingMediaCandidate = {
+              title: primary.title,
+              year: primary.year,
+              creator: primary.creator,
+              actors: primary.actors,
+              imdbId: primary.imdbId,
+              imdbRating: primary.imdbRating,
+              imdbVotes: primary.imdbVotes,
+              plot: primary.plot || primary.overview,
+              imageUrl: primary.imageUrl,
+              audioPreviewUrl: primary.audioPreviewUrl,
+              videoUrl: primary.videoUrl,
+              tags: primary.tags,
+              mediaType: primary.mediaType,
+              releaseDate: primary.releaseDate,
+            };
+
+            const alternatives: AssistantPendingMediaCandidate[] = catalogMatches
+              .filter(
+                (c) =>
+                  c.title.toLowerCase() !== primary.title.toLowerCase() ||
+                  c.year !== primary.year
+              )
+              .slice(0, 3)
+              .map((c) => ({
+                title: c.title,
+                year: c.year,
+                creator: c.creator,
+                actors: c.actors,
+                imdbId: c.imdbId,
+                imdbRating: c.imdbRating,
+                plot: c.plot || c.overview,
+                imageUrl: c.imageUrl,
+                tags: c.tags,
+                mediaType: c.mediaType,
+                releaseDate: c.releaseDate,
+              }));
+
+            pendingConfirmationData = {
+              id: `confirm-${Date.now()}`,
+              status: 'pending',
+              originalAction: act,
+              matchedMedia: matchedCandidate,
+              alternatives,
+            };
+
+            const mediaNoun =
+              vaultGroup === 'musica'
+                ? 'canción o álbum'
+                : matchedCandidate.mediaType === 'series'
+                ? 'serie'
+                : 'película';
+
+            const actorPhrase = matchedCandidate.actors
+              ? ` con ${matchedCandidate.actors}`
+              : '';
+            const directorPhrase =
+              matchedCandidate.creator &&
+              !matchedCandidate.creator.includes('IMDb') &&
+              !matchedCandidate.creator.includes('TMDB')
+                ? `, de ${matchedCandidate.creator}`
+                : '';
+
+            assistantReply = `Encontré "${matchedCandidate.title}"${
+              matchedCandidate.year ? ` (${matchedCandidate.year})` : ''
+            }${directorPhrase}${actorPhrase}. ¿Es esta la ${mediaNoun} que deseas agregar a tu Bóveda?`;
+            continue;
+          }
+        }
+
         const record = await onExecuteAction(act);
         if (record) {
           executedRecords.push(record);
@@ -566,29 +840,14 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
           hour: '2-digit',
           minute: '2-digit',
         }),
-        actionsTaken: executedRecords,
+        actionsTaken: executedRecords.length > 0 ? executedRecords : undefined,
+        pendingConfirmation: pendingConfirmationData,
       };
 
       const completeThread = [...nextMessagesWithUser, assistantMsg];
       setMessages(completeThread);
       triggerAssistantSpeakingWave(finalReplyText);
-
-      // Persist conversation session to Firestore / local state
-      const existingConv = conversations.find(
-        (c) => c.id === activeConversationId
-      );
-      const firstUserMsg = completeThread.find((m) => m.role === 'user');
-      const rawTitle = existingConv?.title || firstUserMsg?.content || textToSend;
-      const cleanTitle =
-        rawTitle.length > 44 ? `${rawTitle.slice(0, 44)}...` : rawTitle;
-
-      const updatedConv: AssistantConversation = {
-        id: activeConversationId,
-        title: cleanTitle,
-        updatedAt: new Date().toISOString(),
-        messages: completeThread,
-      };
-      await onSaveConversation(updatedConv);
+      await persistThread(completeThread, textToSend);
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -778,6 +1037,251 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                 <p className="font-medium whitespace-pre-line break-words">
                   {msg.content}
                 </p>
+
+                {/* Tarjeta Interactiva de Doble Confirmación Inteligente */}
+                {msg.pendingConfirmation &&
+                  msg.pendingConfirmation.status !== 'confirmed' && (
+                    <div className="mt-3 space-y-2.5">
+                      <div
+                        className="rounded-[20px] p-3.5 text-[#141519] shadow-[0_4px_20px_-4px_rgba(19,25,39,0.06)]"
+                        style={{
+                          background:
+                            'linear-gradient(135deg, #AEBDF6 0%, #DAE2FC 50%, #B5C2F7 100%)',
+                          border: '2px solid rgba(255, 255, 255, 0.8)',
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-2.5">
+                          <div
+                            onClick={() => {
+                              if (onPreviewMedia && msg.pendingConfirmation) {
+                                const c = msg.pendingConfirmation.matchedMedia;
+                                onPreviewMedia({
+                                  searchResult: {
+                                    id: `preview-${c.imdbId || c.title}`,
+                                    title: c.title,
+                                    creator: c.creator || 'Director / Autor',
+                                    year: c.year || '',
+                                    imdbId: c.imdbId,
+                                    imdbRating: c.imdbRating,
+                                    imdbVotes: c.imdbVotes,
+                                    actors: c.actors,
+                                    plot: c.plot,
+                                    imageUrl: c.imageUrl,
+                                    tags: c.tags || ['Cine'],
+                                    mediaType: c.mediaType || 'movie',
+                                    sourceLabel: 'IMDb Oficial',
+                                  },
+                                });
+                              }
+                            }}
+                            className="flex items-start gap-3 min-w-0 cursor-pointer group"
+                          >
+                            {msg.pendingConfirmation.matchedMedia.imageUrl ? (
+                              <img
+                                src={
+                                  msg.pendingConfirmation.matchedMedia.imageUrl
+                                }
+                                alt={msg.pendingConfirmation.matchedMedia.title}
+                                className="w-14 h-20 rounded-[14px] object-cover border border-white/80 shadow-xs shrink-0 bg-white group-hover:scale-105 transition-transform"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="w-12 h-16 rounded-[14px] bg-white flex items-center justify-center shadow-xs shrink-0 border border-white/80">
+                                <Film className="w-5 h-5 text-[#141519]" />
+                              </div>
+                            )}
+
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap text-[0.68rem] font-bold text-[#141519]/80">
+                                <span className="px-2 py-0.5 rounded-full bg-white/75 text-[#141519]">
+                                  Validación antes de guardar
+                                </span>
+                                {msg.pendingConfirmation.matchedMedia
+                                  .imdbRating && (
+                                  <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-[#141519] text-white">
+                                    <Star className="w-2.5 h-2.5 fill-[#A8E6E3] text-[#A8E6E3]" />
+                                    IMDb{' '}
+                                    {
+                                      msg.pendingConfirmation.matchedMedia
+                                        .imdbRating
+                                    }
+                                  </span>
+                                )}
+                              </div>
+
+                              <h4 className="text-[0.94rem] font-bold text-[#141519] mt-1 leading-snug">
+                                {msg.pendingConfirmation.matchedMedia.title}
+                                {msg.pendingConfirmation.matchedMedia.year
+                                  ? ` (${msg.pendingConfirmation.matchedMedia.year})`
+                                  : ''}
+                              </h4>
+
+                              {msg.pendingConfirmation.matchedMedia.creator && (
+                                <p className="text-[0.74rem] font-semibold text-[#141519]/80 truncate">
+                                  Dir./Autor:{' '}
+                                  {msg.pendingConfirmation.matchedMedia.creator}
+                                </p>
+                              )}
+
+                              {msg.pendingConfirmation.matchedMedia.actors && (
+                                <p className="text-[0.72rem] font-medium text-[#141519]/75 line-clamp-1 mt-0.5">
+                                  Reparto:{' '}
+                                  {msg.pendingConfirmation.matchedMedia.actors}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+
+                          {onPreviewMedia && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const c = msg.pendingConfirmation!.matchedMedia;
+                                onPreviewMedia({
+                                  searchResult: {
+                                    id: `preview-${c.imdbId || c.title}`,
+                                    title: c.title,
+                                    creator: c.creator || 'Director / Autor',
+                                    year: c.year || '',
+                                    imdbId: c.imdbId,
+                                    imdbRating: c.imdbRating,
+                                    imdbVotes: c.imdbVotes,
+                                    actors: c.actors,
+                                    plot: c.plot,
+                                    imageUrl: c.imageUrl,
+                                    tags: c.tags || ['Cine'],
+                                    mediaType: c.mediaType || 'movie',
+                                    sourceLabel: 'IMDb Oficial',
+                                  },
+                                });
+                              }}
+                              title="Ver ficha completa de vista previa"
+                              className="px-2.5 py-1.5 rounded-full bg-white/80 hover:bg-white text-[#141519] text-[0.68rem] font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>Ficha</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {msg.pendingConfirmation.matchedMedia.plot && (
+                          <p className="text-[0.73rem] font-medium text-[#141519]/85 mt-2 line-clamp-2">
+                            {msg.pendingConfirmation.matchedMedia.plot}
+                          </p>
+                        )}
+
+                        {msg.pendingConfirmation.status === 'pending' && (
+                          <div className="mt-3 pt-2.5 border-t border-white/50 flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={isLoading}
+                              onClick={() =>
+                                handleConfirmPendingAction(
+                                  msg.id,
+                                  msg.pendingConfirmation!
+                                )
+                              }
+                              className="h-9 px-3.5 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.74rem] font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                            >
+                              <Check className="w-3.5 h-3.5 text-[#A8E6E3]" />
+                              <span>Sí, confirmar</span>
+                            </button>
+
+                            {msg.pendingConfirmation.originalAction.args
+                              ?.vaultGroup !== 'musica' && (
+                              <button
+                                type="button"
+                                disabled={isLoading}
+                                onClick={() =>
+                                  handleConfirmPendingAction(
+                                    msg.id,
+                                    msg.pendingConfirmation!,
+                                    undefined,
+                                    'proximamente'
+                                  )
+                                }
+                                className="h-9 px-3 rounded-full bg-white/85 hover:bg-white text-[#141519] text-[0.72rem] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <Hourglass className="w-3 h-3" />
+                                <span>En Próximamente</span>
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={isLoading}
+                              onClick={() =>
+                                handleRejectPendingAction(
+                                  msg.id,
+                                  msg.pendingConfirmation!
+                                )
+                              }
+                              className="h-9 px-3 rounded-full bg-white/60 hover:bg-[#F28B82]/35 text-[#141519] text-[0.72rem] font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              <span>No, buscar otra</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Opciones alternativas cuando el usuario elige "No, buscar otra" */}
+                      {msg.pendingConfirmation.status === 'cancelled' &&
+                        msg.pendingConfirmation.alternatives &&
+                        msg.pendingConfirmation.alternatives.length > 0 && (
+                          <div className="p-3 rounded-[18px] bg-white border border-[#EEF1F5] space-y-2">
+                            <span className="text-[0.7rem] font-bold uppercase tracking-wider text-[#6E7480] block">
+                              Otras coincidencias encontradas:
+                            </span>
+                            {msg.pendingConfirmation.alternatives.map(
+                              (alt, aIdx) => (
+                                <div
+                                  key={`${alt.title}-${aIdx}`}
+                                  className="p-2 rounded-[14px] bg-[#F7F9FB] border border-[#EEF1F5] flex items-center justify-between gap-2"
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    {alt.imageUrl ? (
+                                      <img
+                                        src={alt.imageUrl}
+                                        alt={alt.title}
+                                        className="w-9 h-12 rounded-[10px] object-cover shrink-0"
+                                        referrerPolicy="no-referrer"
+                                      />
+                                    ) : (
+                                      <div className="w-9 h-12 rounded-[10px] bg-white border border-[#EEF1F5] flex items-center justify-center shrink-0">
+                                        <Film className="w-3.5 h-3.5 text-[#141519]" />
+                                      </div>
+                                    )}
+                                    <div className="min-w-0">
+                                      <p className="text-[0.78rem] font-bold text-[#141519] truncate">
+                                        {alt.title}{' '}
+                                        {alt.year ? `(${alt.year})` : ''}
+                                      </p>
+                                      <p className="text-[0.68rem] text-[#6E7480] truncate">
+                                        {alt.actors || alt.creator || 'IMDb'}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleConfirmPendingAction(
+                                        msg.id,
+                                        msg.pendingConfirmation!,
+                                        alt
+                                      )
+                                    }
+                                    className="h-8 px-3 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.7rem] font-bold shrink-0 cursor-pointer"
+                                  >
+                                    Elegir esta
+                                  </button>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        )}
+                    </div>
+                  )}
 
                 {/* Tarjetas Soft Bento en Miniatura */}
                 {msg.actionsTaken && msg.actionsTaken.length > 0 && (

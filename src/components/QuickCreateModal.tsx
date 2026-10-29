@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Calendar,
   ExternalLink,
+  Eye,
   Film,
   Lightbulb,
   Loader2,
@@ -44,6 +45,13 @@ interface QuickCreateModalProps {
   onAddSkill: (item: Omit<SkillItem, 'id'>) => void;
   onAddWishlist: (item: Omit<WishlistItem, 'id'>) => void;
   onAddSchedule: (item: Omit<ScheduleBlock, 'id'>) => void;
+  onPreviewSearchResult?: (
+    item: MediaSearchResult,
+    onSelectFromPreview: (
+      selected: MediaSearchResult,
+      targetGroup?: Exclude<VaultFilterId, 'todo'>
+    ) => void
+  ) => void;
 }
 
 const ModalAudioWave: React.FC<{ active: boolean }> = ({ active }) => (
@@ -98,6 +106,7 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
   onAddSkill,
   onAddWishlist,
   onAddSchedule,
+  onPreviewSearchResult,
 }) => {
   const todayIso = new Date().toISOString().split('T')[0];
 
@@ -793,11 +802,10 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
       )}
 
       {showDropdown && magicResults.length > 0 && (
-        <div className="absolute left-0 right-0 top-12 bg-[#FFFFFF] rounded-2xl border border-[#EEF1F5] shadow-xl max-h-56 overflow-y-auto divide-y divide-[#EEF1F5] z-30">
+        <div className="absolute left-0 right-0 top-12 bg-[#FFFFFF] rounded-2xl border border-[#EEF1F5] shadow-xl max-h-60 overflow-y-auto divide-y divide-[#EEF1F5] z-30">
           {magicResults.map((resItem) => (
-            <button
+            <div
               key={resItem.id}
-              type="button"
               onClick={() => handleSelectMediaResult(resItem)}
               className="w-full p-2.5 hover:bg-[#F7F9FB] flex items-center justify-between gap-3 text-left transition-colors cursor-pointer"
             >
@@ -860,8 +868,28 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
                     </span>
                   )
                 )}
+
+                {onPreviewSearchResult && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPreviewSearchResult(resItem, (selected, targetGroup) => {
+                        if (targetGroup && targetGroup !== vGroup) {
+                          setVGroup(targetGroup);
+                        }
+                        handleSelectMediaResult(selected);
+                      });
+                    }}
+                    title="Vista previa interactiva (Póster, sinopsis, director y reparto)"
+                    className="h-7 px-2.5 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.68rem] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                  >
+                    <Eye className="w-3 h-3 text-[#A8E6E3]" />
+                    <span>Ficha</span>
+                  </button>
+                )}
               </div>
-            </button>
+            </div>
           ))}
         </div>
       )}

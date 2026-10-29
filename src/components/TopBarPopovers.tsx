@@ -26,6 +26,16 @@ export interface NotificationItem {
   read: boolean;
   category: 'calendar' | 'skills' | 'wishlist' | 'vault';
   targetTab: TabId;
+  badge?: string;
+}
+
+export interface FloatingToastAlert {
+  id: string;
+  title: string;
+  description?: string;
+  category: NotificationItem['category'];
+  targetTab: TabId;
+  badge?: string;
 }
 
 export interface UserProfile {
@@ -36,6 +46,87 @@ export interface UserProfile {
   dailyGoalHours: number;
   avatarAccent: 'lavender' | 'mint' | 'sky' | 'charcoal';
 }
+
+interface FloatingToastBannerProps {
+  toast: FloatingToastAlert | null;
+  onClose: () => void;
+  onSelectToast?: (toast: FloatingToastAlert) => void;
+}
+
+export const FloatingToastBanner: React.FC<FloatingToastBannerProps> = ({
+  toast,
+  onClose,
+  onSelectToast,
+}) => {
+  if (!toast) return null;
+
+  const getCategoryIcon = (cat: NotificationItem['category']) => {
+    switch (cat) {
+      case 'calendar':
+        return <Calendar className="w-4 h-4" />;
+      case 'skills':
+        return <Flame className="w-4 h-4" />;
+      case 'wishlist':
+        return <ShoppingBag className="w-4 h-4" />;
+      case 'vault':
+        return <BookMarked className="w-4 h-4" />;
+    }
+  };
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="fixed bottom-20 md:bottom-6 right-3 sm:right-6 z-[60] w-[calc(100vw-24px)] sm:w-[380px] rounded-[22px] bg-[#141519] text-white p-3.5 shadow-floating-dock border border-white/15 flex items-start justify-between gap-3 transition-all duration-300"
+    >
+      <div
+        onClick={() => {
+          if (onSelectToast) onSelectToast(toast);
+          onClose();
+        }}
+        className="flex items-start gap-3 min-w-0 flex-1 cursor-pointer"
+      >
+        <div
+          className={`w-9 h-9 rounded-[12px] flex items-center justify-center shrink-0 keep-dark-text ${
+            toast.category === 'skills' || toast.category === 'vault'
+              ? 'bg-[#A8E6E3] text-[#141519]'
+              : 'bg-[#BBC6F8] text-[#141519]'
+          }`}
+        >
+          {getCategoryIcon(toast.category)}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="w-2 h-2 rounded-full bg-[#6CD4CE] shrink-0" />
+            <p className="text-[0.82rem] font-bold text-white truncate">
+              {toast.title}
+            </p>
+            {toast.badge && (
+              <span className="px-2 py-0.5 rounded-full bg-white/15 text-[#A8E6E3] text-[0.62rem] font-bold tracking-wide">
+                {toast.badge}
+              </span>
+            )}
+          </div>
+          {toast.description && (
+            <p className="text-[0.74rem] text-[#A0A6B2] leading-snug mt-0.5 line-clamp-2">
+              {toast.description}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Cerrar aviso"
+        className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 text-[#A0A6B2] hover:text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+};
 
 interface NotificationsPopoverProps {
   isOpen: boolean;
@@ -84,22 +175,22 @@ export const NotificationsPopover: React.FC<NotificationsPopoverProps> = ({
         aria-hidden="true"
       />
 
-      <div className="absolute right-0 top-13 z-50 w-[360px] sm:w-[400px] bg-white rounded-[26px] border border-[#EEF1F5] shadow-floating-dock overflow-hidden">
+      <div className="absolute right-0 top-13 z-50 w-[calc(100vw-24px)] sm:w-[400px] max-w-[400px] bg-white rounded-[26px] border border-[#EEF1F5] shadow-floating-dock overflow-hidden">
         {/* Header */}
-        <div className="px-5 py-4 bg-soft-mesh-header border-b border-[#EEF1F5] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Bell className="w-4 h-4 text-[#141519]" />
-            <h3 className="text-[0.95rem] font-bold text-[#141519]">
+        <div className="px-5 py-4 bg-soft-mesh-header border-b border-[#EEF1F5] flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Bell className="w-4 h-4 text-[#141519] shrink-0" />
+            <h3 className="text-[0.95rem] font-bold text-[#141519] truncate">
               Centro de Notificaciones
             </h3>
             {unreadCount > 0 && (
-              <span className="px-2 py-0.5 rounded-full bg-[#141519] text-white text-[0.68rem] font-bold tabular-nums">
-                {unreadCount} nuevas
+              <span className="px-2 py-0.5 rounded-full bg-[#141519] text-white text-[0.68rem] font-bold tabular-nums shrink-0">
+                {unreadCount} {unreadCount === 1 ? 'nueva' : 'nuevas'}
               </span>
             )}
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             {unreadCount > 0 && (
               <button
                 type="button"
@@ -123,7 +214,7 @@ export const NotificationsPopover: React.FC<NotificationsPopoverProps> = ({
         </div>
 
         {/* List */}
-        <div className="max-h-[360px] overflow-y-auto divide-y divide-[#EEF1F5]">
+        <div className="max-h-[380px] overflow-y-auto divide-y divide-[#EEF1F5]">
           {notifications.length === 0 ? (
             <div className="p-8 text-center">
               <div className="w-10 h-10 rounded-full bg-[#F7F9FB] text-[#8E95A2] flex items-center justify-center mx-auto mb-2">
@@ -133,7 +224,7 @@ export const NotificationsPopover: React.FC<NotificationsPopoverProps> = ({
                 Todo al día en tu Aether
               </p>
               <p className="text-[0.75rem] text-[#6E7480] mt-0.5">
-                Las alertas de Calendar, Habilidades y Wishlist aparecerán aquí.
+                Las alertas de Bóveda, Calendar, Habilidades y Wishlist aparecerán aquí.
               </p>
             </div>
           ) : (
@@ -159,13 +250,18 @@ export const NotificationsPopover: React.FC<NotificationsPopoverProps> = ({
                   </div>
 
                   <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {!item.read && (
                         <span className="w-2 h-2 rounded-full bg-[#6CD4CE] shrink-0" />
                       )}
                       <p className="text-[0.82rem] font-bold text-[#141519] truncate">
                         {item.title}
                       </p>
+                      {item.badge && (
+                        <span className="px-2 py-0.5 rounded-full bg-[#F3F6F8] border border-[#EEF1F5] text-[0.62rem] font-bold text-[#141519]">
+                          {item.badge}
+                        </span>
+                      )}
                     </div>
                     <p className="text-[0.76rem] text-[#6E7480] leading-snug mt-0.5">
                       {item.description}

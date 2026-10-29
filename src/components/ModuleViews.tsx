@@ -123,6 +123,8 @@ interface VaultViewProps {
   globalQuery: string;
   onOpenCreate: (defaultVaultGroup?: Exclude<VaultFilterId, 'todo'>) => void;
   onOpenAssistant: () => void;
+  onPreviewItem?: (item: VaultItem) => void;
+  onPreviewSearchResult?: (item: MediaSearchResult) => void;
   onEditItem?: (item: VaultItem) => void;
   onDeleteItem?: (item: VaultItem) => void;
   spotifyProfile?: { displayName: string; imageUrl?: string } | null;
@@ -146,6 +148,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
   globalQuery,
   onOpenCreate,
   onOpenAssistant,
+  onPreviewItem,
+  onPreviewSearchResult,
   onEditItem,
   onDeleteItem,
   spotifyProfile,
@@ -598,7 +602,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     return (
                       <div
                         key={sp.id}
-                        className="p-3 rounded-[18px] bg-[#F7F9FB] border border-[#EEF1F5] flex flex-col justify-between gap-2.5"
+                        onClick={() => onPreviewSearchResult?.(sp)}
+                        className="p-3 rounded-[18px] bg-[#F7F9FB] hover:bg-[#EBF0F5]/60 border border-[#EEF1F5] flex flex-col justify-between gap-2.5 cursor-pointer transition-colors"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className="w-11 h-11 rounded-[12px] bg-[#EBF0F5] overflow-hidden shrink-0 border border-white">
@@ -626,14 +631,15 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() =>
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 handleToggleAudioPreview({
                                   id: sp.id,
                                   title: sp.title,
                                   creator: sp.creator,
                                   audioPreviewUrl: sp.audioPreviewUrl,
-                                })
-                              }
+                                });
+                              }}
                               title="Escuchar vista previa de 30s"
                               className={`h-7 px-2.5 rounded-full border text-[0.68rem] font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
                                 isPlayingSp
@@ -663,6 +669,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                                 href={sp.videoUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                                 title="Abrir en Spotify"
                                 className="h-7 px-2.5 rounded-full bg-[#1DB954]/15 hover:bg-[#1DB954]/30 text-[#141519] text-[0.68rem] font-bold flex items-center gap-1"
                               >
@@ -674,7 +681,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
 
                           <button
                             type="button"
-                            onClick={() => handleQuickSaveSpotifyTrackOrAlbum(sp)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleQuickSaveSpotifyTrackOrAlbum(sp);
+                            }}
                             title="Guardar en Bóveda de Música"
                             className="h-7 px-3 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.68rem] font-semibold shrink-0 cursor-pointer"
                           >
@@ -820,7 +830,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   return (
                     <div
                       key={fav.id}
-                      className={`${gradientClass} inner-card-stroke rounded-[20px] p-5 flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5`}
+                      onClick={() => onPreviewItem?.(fav)}
+                      className={`${gradientClass} inner-card-stroke rounded-[20px] p-5 flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer`}
                     >
                       <div className="flex items-start justify-between gap-2 mb-4">
                         <div className="w-[44px] h-[44px] rounded-[14px] bg-white text-[#141519] keep-dark-text flex items-center justify-center shadow-xs shrink-0 overflow-hidden border border-white/60">
@@ -875,7 +886,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           {onEditItem && (
                             <button
                               type="button"
-                              onClick={() => onEditItem(fav)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onEditItem(fav);
+                              }}
                               title="Editar registro"
                               aria-label="Editar registro"
                               className="w-8 h-8 rounded-full bg-white/60 hover:bg-white text-[#141519] keep-dark-text flex items-center justify-center cursor-pointer transition-colors"
@@ -885,7 +899,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           )}
                           <button
                             type="button"
-                            onClick={() => setActiveFilter(fav.vaultGroup)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveFilter(fav.vaultGroup);
+                            }}
                             className="w-8 h-8 rounded-full bg-white/60 hover:bg-white text-[#141519] keep-dark-text flex items-center justify-center cursor-pointer"
                             aria-label="Filtrar categoría"
                           >
@@ -1002,7 +1019,11 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     return (
                       <div
                         key={up.id}
-                        onClick={() => setActiveFilter('proximamente')}
+                        onClick={() =>
+                          onPreviewItem
+                            ? onPreviewItem(up)
+                            : setActiveFilter('proximamente')
+                        }
                         className="p-3.5 rounded-[20px] bg-[#F7F9FB] hover:bg-[#EBF0F5]/60 border border-[#EEF1F5] flex flex-col gap-2.5 cursor-pointer transition-all"
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -1124,7 +1145,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 onEditItem ? (
                   <button
                     type="button"
-                    onClick={() => onEditItem(item)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onEditItem(item);
+                    }}
                     title="Editar registro de la Bóveda"
                     aria-label="Editar registro"
                     className="w-7 h-7 rounded-full bg-[#F7F9FB] hover:bg-[#141519] text-[#6E7480] hover:text-white border border-[#EEF1F5] flex items-center justify-center transition-colors cursor-pointer shrink-0"
@@ -1137,7 +1161,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 onDeleteItem ? (
                   <button
                     type="button"
-                    onClick={() => onDeleteItem(item)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteItem(item);
+                    }}
                     title="Eliminar registro de la Bóveda"
                     aria-label="Eliminar registro"
                     className="w-7 h-7 rounded-full bg-[#F7F9FB] hover:bg-[#F28B82] text-[#6E7480] hover:text-[#141519] border border-[#EEF1F5] flex items-center justify-center transition-colors cursor-pointer shrink-0"
@@ -1158,7 +1185,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 return (
                   <div
                     key={item.id}
-                    className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5"
+                    onClick={() => onPreviewItem?.(item)}
+                    className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                   >
                     <div>
                       <div className="flex items-center gap-4 mb-4">
@@ -1241,7 +1269,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           <div className="flex items-center gap-3">
                             <button
                               type="button"
-                              onClick={() => handleToggleAudioPreview(item)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleAudioPreview(item);
+                              }}
                               disabled={isLoadingThis}
                               aria-label={
                                 isPlayingThis
@@ -1306,6 +1337,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           href={spotifyHref}
                           target="_blank"
                           rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
                           className="px-3 py-1 rounded-full bg-[#1DB954] hover:bg-[#1aa34a] text-[#141519] keep-dark-text text-[0.7rem] font-bold flex items-center gap-1.5 transition-colors shadow-2xs"
                         >
                           <SpotifyMinimalLogo className="w-3.5 h-3.5" />
@@ -1342,7 +1374,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 return (
                   <div
                     key={item.id}
-                    className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5"
+                    onClick={() => onPreviewItem?.(item)}
+                    className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                   >
                     <div>
                       <div className="relative w-full aspect-video rounded-[18px] overflow-hidden mb-4 border border-[#EEF1F5] group">
@@ -1408,6 +1441,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                         href={item.videoUrl || 'https://youtube.com'}
                         target="_blank"
                         rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
                         className="px-3 py-1 rounded-full bg-[#F7F9FB] hover:bg-[#141519] hover:text-white text-[#141519] text-[0.72rem] font-semibold flex items-center gap-1 transition-colors"
                       >
                         <span>Ver video</span>
@@ -1425,7 +1459,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 return (
                   <div
                     key={item.id}
-                    className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5"
+                    onClick={() => onPreviewItem?.(item)}
+                    className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                   >
                     <div>
                       <div className="flex items-center justify-between gap-3 mb-4">
@@ -1513,7 +1548,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 return (
                   <div
                     key={item.id}
-                    className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5"
+                    onClick={() => onPreviewItem?.(item)}
+                    className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                   >
                     <div>
                       <div className="flex items-start justify-between gap-3 mb-4">
@@ -1588,7 +1624,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
               return (
                 <div
                   key={item.id}
-                  className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5"
+                  onClick={() => onPreviewItem?.(item)}
+                  className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                 >
                   <div>
                     <div className="flex items-start gap-4 mb-4">
@@ -1619,6 +1656,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                                 }
                                 target="_blank"
                                 rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
                                 title={
                                   item.imdbId
                                     ? `IMDb Oficial (${item.imdbId}) · ${item.imdbVotes || ''}`

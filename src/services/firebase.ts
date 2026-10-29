@@ -691,6 +691,27 @@ export function sanitizeConversationMessages(messages: ChatMessage[]) {
             })
           )
         : undefined,
+      pendingConfirmation: m.pendingConfirmation
+        ? cleanUndefined({
+            id: clampStr(m.pendingConfirmation.id || `conf-${Date.now()}`, 80),
+            status: m.pendingConfirmation.status || 'pending',
+            originalQuery: clampStr(
+              m.pendingConfirmation.originalQuery || '',
+              200
+            ),
+            actionName: clampStr(
+              m.pendingConfirmation.actionName || 'addVaultItem',
+              60
+            ),
+            actionArgs: cleanUndefined(m.pendingConfirmation.actionArgs || {}),
+            candidate: cleanUndefined(m.pendingConfirmation.candidate || {}),
+            alternatives: Array.isArray(m.pendingConfirmation.alternatives)
+              ? m.pendingConfirmation.alternatives
+                  .slice(0, 4)
+                  .map((alt) => cleanUndefined(alt))
+              : undefined,
+          })
+        : undefined,
     })
   );
 }

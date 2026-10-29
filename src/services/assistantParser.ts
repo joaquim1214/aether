@@ -376,6 +376,23 @@ export function parseNaturalLanguageCommand(
     lower.includes('track') ||
     lower.includes('tema ');
 
+  const isWishlistIntent =
+    lower.includes('wishlist') ||
+    lower.includes('presupuesto') ||
+    lower.includes('fondo de ahorro') ||
+    lower.includes('ahorro disponible') ||
+    lower.includes('comprar');
+
+  const isTaskIntent =
+    lower.includes('tarea') ||
+    lower.includes('google tasks') ||
+    lower.includes('pendiente:');
+
+  const hasGeneralAddVerb =
+    /(?:quiero\s+)?(?:guardar?|añadir?|aña[d]e|agregar?|agrega|registrar?|registra|vi\b|termin[eé]\s+de\s+ver|pon(?:er)?\s+en\s+mi\s+b[oó]veda)/i.test(
+      trimmed
+    );
+
   const isMovieOrVaultIntent =
     isMusicIntent ||
     Boolean(ratingMatch) ||
@@ -391,7 +408,8 @@ export function parseNaturalLanguageCommand(
     lower.includes('estreno') ||
     lower.includes('video') ||
     lower.includes('terminé de ver') ||
-    lower.includes('termine de ver');
+    lower.includes('termine de ver') ||
+    (hasGeneralAddVerb && !isWishlistIntent && !isTaskIntent);
 
   if (isMovieOrVaultIntent && !isSkillIntent && !isScheduleIntent) {
     const rating = ratingMatch
@@ -483,7 +501,7 @@ export function parseNaturalLanguageCommand(
       }
     } else {
       const genericVerbMatch = trimmed.match(
-        /(?:guarda|añade|agrega|registra|vi|termin[eé]\s+de\s+ver)\s+(?:la\s+pel[ií]cula\s+|la\s+serie\s+|el\s+[aá]lbum\s+|la\s+canci[oó]n\s+|el\s+libro\s+|el\s+|la\s+)?(.+?)(?:\s+con\s+nota|\s+en\s+la\s+b[oó]veda|\s+a\s+mi\s+m[uú]sica|\s+en\s+mi\s+b[oó]veda|$)/i
+        /(?:(?:quiero|puedes|podr[ií]as|por\s+favor)\s+)?(?:guardar?|añadir?|añade|agregar?|agrega|registrar?|registra|vi|termin[eé]\s+de\s+ver)\s+(?:la\s+pel[ií]cula\s+|la\s+serie\s+|el\s+[aá]lbum\s+|la\s+canci[oó]n\s+|el\s+libro\s+|el\s+|la\s+)?(.+?)(?:\s+con\s+nota|\s+en\s+la\s+b[oó]veda|\s+a\s+la\s+b[oó]veda|\s+a\s+mi\s+m[uú]sica|\s+en\s+mi\s+b[oó]veda|$)/i
       );
       if (genericVerbMatch && genericVerbMatch[1]) {
         const rawCandidate = cleanExtractedTitle(genericVerbMatch[1]);

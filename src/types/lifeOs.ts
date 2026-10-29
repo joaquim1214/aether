@@ -225,12 +225,41 @@ export interface AssistantMessage {
   actions?: AssistantActionRecord[];
 }
 
+export interface AssistantPendingMediaCandidate {
+  title: string;
+  year?: string;
+  creator?: string;
+  actors?: string;
+  imdbId?: string;
+  imdbRating?: string;
+  imdbVotes?: string;
+  plot?: string;
+  imageUrl?: string;
+  audioPreviewUrl?: string;
+  videoUrl?: string;
+  tags?: string[];
+  mediaType?: 'movie' | 'series' | 'anime' | 'song' | 'album' | 'video';
+  releaseDate?: string;
+}
+
+export interface AssistantPendingConfirmation {
+  id: string;
+  status: 'pending' | 'confirmed' | 'cancelled';
+  originalAction: {
+    name: string;
+    args: Record<string, any>;
+  };
+  matchedMedia: AssistantPendingMediaCandidate;
+  alternatives?: AssistantPendingMediaCandidate[];
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
   actionsTaken?: AssistantActionRecord[];
+  pendingConfirmation?: AssistantPendingConfirmation;
 }
 
 export interface AssistantConversation {
@@ -241,4 +270,5 @@ export interface AssistantConversation {
   createdAt: string;
   updatedAt: string;
 }
+
 
