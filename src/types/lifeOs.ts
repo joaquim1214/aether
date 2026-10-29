@@ -253,6 +253,24 @@ export interface AssistantPendingConfirmation {
   alternatives?: AssistantPendingMediaCandidate[];
 }
 
+export interface AssistantRecommendationItem {
+  id: string;
+  title: string;
+  creator: string;
+  year?: string;
+  category: VaultCategory;
+  vaultGroup: Exclude<VaultFilterId, 'todo'>;
+  imdbId?: string;
+  imdbRating?: string;
+  imageUrl?: string;
+  audioPreviewUrl?: string;
+  spotifyUrl?: string;
+  tags: string[];
+  plot?: string;
+  reason: string;
+  savedToGroup?: Exclude<VaultFilterId, 'todo'>;
+}
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -260,6 +278,7 @@ export interface ChatMessage {
   timestamp: string;
   actionsTaken?: AssistantActionRecord[];
   pendingConfirmation?: AssistantPendingConfirmation;
+  recommendations?: AssistantRecommendationItem[];
 }
 
 export interface AssistantConversation {

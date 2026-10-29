@@ -175,12 +175,14 @@ export const VaultView: React.FC<VaultViewProps> = ({
   const [isSearchingExternalCatalog, setIsSearchingExternalCatalog] =
     useState(false);
 
-  // Touch-scroll guard so vertical scrolling on mobile never triggers accidental tap previews
+  // Touch-scroll guard so vertical scrolling on mobile (including inside compact synopsis scrollbars) never triggers accidental tap previews
   const touchStartCoordsRef = React.useRef<{ x: number; y: number } | null>(
     null
   );
+  const touchMovedRef = React.useRef<boolean>(false);
 
   const handleCardTouchStart = (e: React.TouchEvent) => {
+    touchMovedRef.current = false;
     if (e.touches && e.touches.length > 0) {
       touchStartCoordsRef.current = {
         x: e.touches[0].clientX,
@@ -189,11 +191,30 @@ export const VaultView: React.FC<VaultViewProps> = ({
     }
   };
 
+  const handleCardTouchMove = (e: React.TouchEvent) => {
+    if (!touchStartCoordsRef.current || !e.touches || e.touches.length === 0) {
+      return;
+    }
+    const dx = Math.abs(e.touches[0].clientX - touchStartCoordsRef.current.x);
+    const dy = Math.abs(e.touches[0].clientY - touchStartCoordsRef.current.y);
+    if (dx > 8 || dy > 8) {
+      touchMovedRef.current = true;
+    }
+  };
+
   const handleCardClickItem = (item: VaultItem) => {
+    if (touchMovedRef.current) {
+      touchMovedRef.current = false;
+      return;
+    }
     onPreviewItem?.(item);
   };
 
   const handleCardClickSearchResult = (resItem: MediaSearchResult) => {
+    if (touchMovedRef.current) {
+      touchMovedRef.current = false;
+      return;
+    }
     onPreviewSearchResult?.(resItem);
   };
 
@@ -771,6 +792,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                       <div
                         key={sp.id}
                         onTouchStart={handleCardTouchStart}
+                  onTouchMove={handleCardTouchMove}
                         onClick={() => handleCardClickSearchResult(sp)}
                         onMouseEnter={() => onHoverPreviewSearchResult?.(sp)}
                         onMouseLeave={() => onHoverLeavePreview?.()}
@@ -996,6 +1018,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 <div
                   key={resItem.id}
                   onTouchStart={handleCardTouchStart}
+                  onTouchMove={handleCardTouchMove}
                   onClick={() => handleCardClickSearchResult(resItem)}
                   onMouseEnter={() => onHoverPreviewSearchResult?.(resItem)}
                   onMouseLeave={() => onHoverLeavePreview?.()}
@@ -1033,9 +1056,11 @@ export const VaultView: React.FC<VaultViewProps> = ({
                         {resItem.creator}
                       </p>
                       {(resItem.plot || resItem.overview) && (
-                        <p className="text-[0.68rem] text-[#6E7480] line-clamp-2 mt-1 leading-relaxed">
-                          {resItem.plot || resItem.overview}
-                        </p>
+                        <div className="vault-synopsis-box mt-1.5 rounded-[12px] bg-[#FFFFFF]/80 p-2 border border-[#EEF1F5]">
+                          <p className="vault-synopsis-scroll text-[0.7rem] text-[#6E7480] leading-relaxed">
+                            {resItem.plot || resItem.overview}
+                          </p>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -1105,6 +1130,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     <div
                       key={fav.id}
                       onTouchStart={handleCardTouchStart}
+                  onTouchMove={handleCardTouchMove}
                       onClick={() => handleCardClickItem(fav)}
                       onMouseEnter={() => onHoverPreviewItem?.(fav)}
                       onMouseLeave={() => onHoverLeavePreview?.()}
@@ -1216,9 +1242,22 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           ))}
                         </div>
 
-                        <p className="text-[0.76rem] font-medium text-[#141519]/85 keep-dark-text line-clamp-2 leading-relaxed">
-                          “{fav.review}”
-                        </p>
+                        <div
+                          style={{
+                            backgroundColor: 'rgba(255, 255, 255, 0.28)',
+                          }}
+                          className="vault-synopsis-box vault-synopsis-box-pastel rounded-[14px] p-3 border border-white/45"
+                        >
+                          <div className="vault-synopsis-scroll text-[0.76rem] font-medium text-[#141519]/90 keep-dark-text leading-relaxed space-y-1.5">
+                            <p>“{fav.review}”</p>
+                            {fav.plot &&
+                              fav.plot.trim() !== fav.review.trim() && (
+                                <p className="text-[0.72rem] text-[#141519]/75 keep-dark-text pt-1 border-t border-white/35">
+                                  {fav.plot}
+                                </p>
+                              )}
+                          </div>
+                        </div>
                       </div>
 
                       <div>
@@ -1297,6 +1336,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                       <div
                         key={up.id}
                         onTouchStart={handleCardTouchStart}
+                  onTouchMove={handleCardTouchMove}
                         onClick={() =>
                           onPreviewItem
                             ? handleCardClickItem(up)
@@ -1466,6 +1506,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   <div
                     key={item.id}
                     onTouchStart={handleCardTouchStart}
+                  onTouchMove={handleCardTouchMove}
                     onClick={() => handleCardClickItem(item)}
                     onMouseEnter={() => onHoverPreviewItem?.(item)}
                     onMouseLeave={() => onHoverLeavePreview?.()}
@@ -1642,9 +1683,11 @@ export const VaultView: React.FC<VaultViewProps> = ({
                         ))}
                       </div>
 
-                      <p className="text-[0.8rem] text-[#141519]/85 bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] leading-relaxed">
-                        “{item.review}”
-                      </p>
+                      <div className="vault-synopsis-box bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5]">
+                        <div className="vault-synopsis-scroll text-[0.8rem] text-[#141519]/85 leading-relaxed">
+                          “{item.review}”
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1658,6 +1701,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   <div
                     key={item.id}
                     onTouchStart={handleCardTouchStart}
+                  onTouchMove={handleCardTouchMove}
                     onClick={() => handleCardClickItem(item)}
                     onMouseEnter={() => onHoverPreviewItem?.(item)}
                     onMouseLeave={() => onHoverLeavePreview?.()}
@@ -1701,7 +1745,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                       </h4>
 
                       <div
-                        className={`rounded-[16px] p-3.5 mb-3 ${
+                        className={`vault-synopsis-box vault-synopsis-box-pastel rounded-[16px] p-3.5 mb-3 ${
                           item.accent === 'mint'
                             ? 'bg-mint-gradient'
                             : 'bg-lavender-gradient'
@@ -1711,9 +1755,16 @@ export const VaultView: React.FC<VaultViewProps> = ({
                           <Lightbulb className="w-3.5 h-3.5" />
                           <span>Idea clave que aprendí:</span>
                         </div>
-                        <p className="text-[0.78rem] font-medium text-[#141519] keep-dark-text leading-relaxed">
-                          {item.keyTakeaway || item.review}
-                        </p>
+                        <div className="vault-synopsis-scroll text-[0.78rem] font-medium text-[#141519] keep-dark-text leading-relaxed space-y-1.5">
+                          <p>{item.keyTakeaway || item.review}</p>
+                          {item.keyTakeaway &&
+                            item.review &&
+                            item.review.trim() !== item.keyTakeaway.trim() && (
+                              <p className="text-[0.74rem] text-[#141519]/80 keep-dark-text pt-1 border-t border-white/40">
+                                “{item.review}”
+                              </p>
+                            )}
+                        </div>
                       </div>
                     </div>
 
@@ -1798,10 +1849,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                         </div>
                       )}
 
-                      <div className="bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] mb-4">
-                        <p className="text-[0.8rem] text-[#141519]/90 leading-relaxed">
+                      <div className="vault-synopsis-box bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] mb-4">
+                        <div className="vault-synopsis-scroll text-[0.8rem] text-[#141519]/90 leading-relaxed">
                           {item.review}
-                        </p>
+                        </div>
                       </div>
                     </div>
 
@@ -1835,6 +1886,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   <div
                     key={item.id}
                     onTouchStart={handleCardTouchStart}
+                  onTouchMove={handleCardTouchMove}
                     onClick={() => handleCardClickItem(item)}
                     onMouseEnter={() => onHoverPreviewItem?.(item)}
                     onMouseLeave={() => onHoverLeavePreview?.()}
@@ -1886,9 +1938,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
                         </p>
                       )}
 
-                      <p className="text-[0.8rem] text-[#141519]/85 bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] mb-4 leading-relaxed">
-                        “{item.review}”
-                      </p>
+                      <div className="vault-synopsis-box bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] mb-4">
+                        <div className="vault-synopsis-scroll text-[0.8rem] text-[#141519]/85 leading-relaxed space-y-1.5">
+                          <p>“{item.review}”</p>
+                          {item.plot &&
+                            item.plot.trim() !== item.review.trim() && (
+                              <p className="text-[0.75rem] text-[#6E7480] pt-1.5 border-t border-[#EEF1F5]">
+                                {item.plot}
+                              </p>
+                            )}
+                        </div>
+                      </div>
                     </div>
 
                     <div>
@@ -1914,6 +1974,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 <div
                   key={item.id}
                   onTouchStart={handleCardTouchStart}
+                  onTouchMove={handleCardTouchMove}
                   onClick={() => handleCardClickItem(item)}
                   onMouseEnter={() => onHoverPreviewItem?.(item)}
                   onMouseLeave={() => onHoverLeavePreview?.()}
@@ -1990,9 +2051,17 @@ export const VaultView: React.FC<VaultViewProps> = ({
                       </div>
                     </div>
 
-                    <p className="text-[0.82rem] text-[#141519]/85 leading-relaxed bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] mb-4">
-                      “{item.review}”
-                    </p>
+                    <div className="vault-synopsis-box bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] mb-4">
+                      <div className="vault-synopsis-scroll text-[0.82rem] text-[#141519]/85 leading-relaxed space-y-1.5">
+                        <p>“{item.review}”</p>
+                        {item.plot &&
+                          item.plot.trim() !== item.review.trim() && (
+                            <p className="text-[0.76rem] text-[#6E7480] pt-1.5 border-t border-[#EEF1F5]">
+                              {item.plot}
+                            </p>
+                          )}
+                      </div>
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-1.5 pt-1">

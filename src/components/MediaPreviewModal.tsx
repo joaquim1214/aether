@@ -328,8 +328,8 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           </div>
 
           {plot && (
-            <div className="p-3 rounded-[14px] bg-[#F7F9FB] border border-[#EEF1F5]">
-              <p className="text-[0.75rem] font-medium text-[#141519] leading-relaxed line-clamp-3">
+            <div className="vault-synopsis-box p-3 rounded-[14px] bg-[#F7F9FB] border border-[#EEF1F5]">
+              <p className="vault-synopsis-scroll text-[0.75rem] font-medium text-[#141519] leading-relaxed">
                 {plot}
               </p>
             </div>
@@ -338,8 +338,8 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           {activeVaultItem &&
             personalReview &&
             personalReview !== plot && (
-              <div className="px-3 py-2 rounded-[14px] bg-mint-gradient keep-dark-text border border-white/80">
-                <p className="text-[0.72rem] font-semibold text-[#141519] line-clamp-2">
+              <div className="vault-synopsis-box vault-synopsis-box-pastel px-3 py-2 rounded-[14px] bg-mint-gradient keep-dark-text border border-white/80">
+                <p className="vault-synopsis-scroll text-[0.72rem] font-semibold text-[#141519]">
                   “{personalReview}”
                 </p>
               </div>

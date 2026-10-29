@@ -5,7 +5,10 @@ import dotenv from "dotenv";
 import { FunctionDeclaration, GoogleGenAI, Type } from "@google/genai";
 import {
   buildContextualReply,
+  generateVaultBasedRecommendations,
+  isRecommendationIntent,
   parseNaturalLanguageCommand,
+  parseRecommendationFollowUp,
 } from "./src/services/assistantParser";
 
 dotenv.config();
@@ -1237,6 +1240,32 @@ app.post("/api/assistant", async (req, res) => {
     return res.status(400).json({ error: "El mensaje es requerido." });
   }
 
+  const vaultItems = Array.isArray(context?.vaultItems)
+    ? context.vaultItems
+    : [];
+  const recentRecommendations = Array.isArray(context?.recentRecommendations)
+    ? context.recentRecommendations
+    : [];
+
+  // 1. Check direct follow-up order on a recent recommendation ("Guárdala en la Bóveda" / "Agrégala al Hype Radar")
+  const followUpActions = parseRecommendationFollowUp(
+    prompt,
+    recentRecommendations
+  );
+  if (followUpActions.length > 0) {
+    return res.json({
+      reply: buildContextualReply(followUpActions),
+      actions: followUpActions,
+      source: "aether-recommendation-action",
+    });
+  }
+
+  // 2. Precompute Vault-based recommendations if the user is asking for suggestions
+  const askingForRecommendations = isRecommendationIntent(prompt);
+  const recBundle = askingForRecommendations
+    ? generateVaultBasedRecommendations(prompt, vaultItems)
+    : null;
+
   try {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
@@ -1271,21 +1300,44 @@ app.post("/api/assistant", async (req, res) => {
           .join("\n")
       : "";
 
+    const vaultSummaryText = vaultItems
+      .slice(0, 25)
+      .map(
+        (v: any) =>
+          `${v.title} (${v.category || v.vaultGroup} · ${
+            v.creator || "Autor"
+          } · Tier ${v.tier || "S"} · Tags: ${(v.tags || []).join(", ")})`
+      )
+      .join(" | ");
+
     const systemInstruction = `Eres el Asistente de IA integrado en "Aether" (Aether Assistant), conectado en tiempo real a Firebase Firestore, Spotify API, IMDb/TMDB, Google Calendar API y Google Tasks API.
 Fecha actual: ${todayStr} (Día del mes: ${new Date().getDate()}).
 Cuando el usuario te pida registrar, actualizar o agendar algo, DEBES invocar las herramientas (Function Calling) correspondientes extrayendo con total precisión los datos:
 1. Bóveda de Experiencias ('peliculas_series', 'proximamente', 'musica', 'videos', 'personas', 'momentos') -> usa addVaultItem:
    - Ejemplo: "Guarda la película Interstellar con nota 9.5 en la Bóveda" -> title: "Interstellar", vaultGroup: "peliculas_series", category: "Cine", rating: 9.5, tier: "S".
    - Ejemplo: "Añade el álbum Random Access Memories de Daft Punk a mi música" -> title: "Random Access Memories", creator: "Daft Punk", vaultGroup: "musica", category: "Música", rating: 9.6, tier: "S".
-2. Proyecto de Vida RPG y Metas Físicas (Básquet, Fútbol, entrenamientos, habilidades, récords) -> usa updateOrCreateSkill:
-   - Si el usuario indica minutos (ej. "45 minutos"), convierte a horas decimales (hoursToAdd: 0.75).
-   - Si menciona récords o estadísticas (ej. "3 triples anotados"), guárdalos en sportStats y newMilestone.
-   - Si menciona XP explícito (ej. "+50 XP"), asigna progressDelta: 50.
-3. Wishlist Inteligente (agregar producto o actualizar el Fondo de Ahorro Disponible) -> usa manageWishlist.
-4. Eventos, entrenamientos o partidos en Google Calendar -> usa scheduleCalendarEvent:
-   - Calcula el dayOfMonth exacto si dice "mañana", "este viernes", "el sábado", etc., respecto a la fecha actual (${todayStr}).
-   - Convierte horas como "a las 6 pm" al formato 24h "18:00 - 19:30".
-5. Tareas pendientes o to-dos en Google Tasks -> usa createGoogleTask.
+2. Recomendador Inteligente de Entretenimiento:
+   - Si el usuario pide recomendaciones de películas, series, anime o música, NO llames a addVaultItem todavía. Analiza su Bóveda actual (${
+     vaultSummaryText || "Ciencia Ficción, Thriller, Anime y Synthwave"
+   }) y presenta las sugerencias justificadas (${
+      recBundle
+        ? recBundle.recommendations
+            .map((r) => `${r.title} (${r.year}, ${r.creator}): ${r.reason}`)
+            .join("; ")
+        : ""
+    }), recordándole que puede decir "Guárdala en la Bóveda" o "Agrégala al Hype Radar".
+3. Si el usuario pide guardar una recomendación previa (${JSON.stringify(
+      recentRecommendations.map((r: any) => ({
+        title: r.title,
+        creator: r.creator,
+        vaultGroup: r.vaultGroup,
+        category: r.category,
+      }))
+    )}) diciendo "Guárdala en la Bóveda" o "Agrégala al Hype Radar", invoca addVaultItem con los datos exactos de esa recomendación (usando vaultGroup: 'proximamente' si menciona Hype Radar o Próximamente).
+4. Proyecto de Vida RPG y Metas Físicas (Básquet, Fútbol, entrenamientos, habilidades, récords) -> usa updateOrCreateSkill.
+5. Wishlist Inteligente -> usa manageWishlist.
+6. Eventos, entrenamientos o partidos en Google Calendar -> usa scheduleCalendarEvent.
+7. Tareas pendientes o to-dos en Google Tasks -> usa createGoogleTask.
 
 Habilidades actuales en Firebase: ${JSON.stringify(
       context?.skills?.map((s: any) => ({ name: s.name, branch: s.branch })) || []
@@ -1301,17 +1353,19 @@ ${
       contents: prompt,
       config: {
         systemInstruction,
-        tools: [
-          {
-            functionDeclarations: [
-              addVaultItemDeclaration,
-              updateOrCreateSkillDeclaration,
-              manageWishlistDeclaration,
-              scheduleCalendarEventDeclaration,
-              createGoogleTaskDeclaration,
+        tools: askingForRecommendations
+          ? undefined
+          : [
+              {
+                functionDeclarations: [
+                  addVaultItemDeclaration,
+                  updateOrCreateSkillDeclaration,
+                  manageWishlistDeclaration,
+                  scheduleCalendarEventDeclaration,
+                  createGoogleTaskDeclaration,
+                ],
+              },
             ],
-          },
-        ],
       },
     });
 
@@ -1321,20 +1375,35 @@ ${
       args: fc.args,
     }));
 
-    const finalActions =
-      actions.length > 0 ? actions : fallbackParseIntent(prompt, context);
+    const finalActions = askingForRecommendations
+      ? []
+      : actions.length > 0
+      ? actions
+      : fallbackParseIntent(prompt, context);
 
     let replyText = response.text || "";
-    if (!replyText && finalActions.length > 0) {
+    if (!replyText && recBundle) {
+      replyText = recBundle.replyText;
+    } else if (!replyText && finalActions.length > 0) {
       replyText = buildContextualReply(finalActions as any);
     }
 
     return res.json({
       reply: replyText,
       actions: finalActions,
+      recommendations: recBundle ? recBundle.recommendations : undefined,
       source: "gemini-3.8-flash",
     });
   } catch {
+    if (recBundle) {
+      return res.json({
+        reply: recBundle.replyText,
+        actions: [],
+        recommendations: recBundle.recommendations,
+        source: "aether-recommender-engine",
+      });
+    }
+
     const fallbackActions = fallbackParseIntent(prompt, context);
     const replyText = buildContextualReply(fallbackActions);
 

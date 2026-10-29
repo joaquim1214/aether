@@ -152,11 +152,34 @@ function cleanExtractedTitle(raw: string): string {
 
 export function parseNaturalLanguageCommand(
   prompt: string,
-  currentContext?: { skills?: any[] }
+  currentContext?: {
+    skills?: any[];
+    vaultItems?: any[];
+    recentRecommendations?: any[];
+  }
 ): ParsedAssistantAction[] {
   const trimmed = prompt.trim();
   const lower = trimmed.toLowerCase();
   const actions: ParsedAssistantAction[] = [];
+
+  // 0A. Check if the user is ordering "Guárdala en la Bóveda" or "Agrégala al Hype Radar" for a recent recommendation
+  if (
+    currentContext?.recentRecommendations &&
+    currentContext.recentRecommendations.length > 0
+  ) {
+    const recFollowUp = parseRecommendationFollowUp(
+      trimmed,
+      currentContext.recentRecommendations
+    );
+    if (recFollowUp.length > 0) {
+      return recFollowUp;
+    }
+  }
+
+  // 0B. Do not trigger add actions when the user is asking for recommendations
+  if (isRecommendationIntent(trimmed)) {
+    return [];
+  }
 
   // ==========================================================================
   // 1. CALENDAR / AGENDA DETECTION ("Agéndame un partido de fútbol este viernes a las 6 pm")
@@ -626,9 +649,566 @@ export function parseNaturalLanguageCommand(
   return actions;
 }
 
+export interface CuratedRecommendationSeed {
+  id: string;
+  title: string;
+  creator: string;
+  year: string;
+  category: 'Cine' | 'Serie' | 'Música';
+  vaultGroup: 'peliculas_series' | 'musica';
+  imdbId?: string;
+  imdbRating?: string;
+  imageUrl?: string;
+  spotifyUrl?: string;
+  tags: string[];
+  affinityKeywords: string[];
+  plot: string;
+  baseReason: string;
+}
+
+const CURATED_RECOMMENDATION_POOL: CuratedRecommendationSeed[] = [
+  {
+    id: 'rec-arrival',
+    title: 'La Llegada (Arrival)',
+    creator: 'Denis Villeneuve',
+    year: '2016',
+    category: 'Cine',
+    vaultGroup: 'peliculas_series',
+    imdbId: 'tt2543164',
+    imdbRating: '7.9',
+    imageUrl:
+      'https://m.media-amazon.com/images/M/MV5BMTExMzU0ODcxNDheQTJeQWpwZ15BbWU4MDE1OTI4MzAy._V1_SX300.jpg',
+    tags: ['Ciencia Ficción', 'Drama', 'Filosófica'],
+    affinityKeywords: [
+      'sci-fi',
+      'ciencia ficción',
+      'dune',
+      'interstellar',
+      'villeneuve',
+      'nolan',
+      'espacio',
+      'filosofía',
+      'drama',
+    ],
+    plot: 'Cuando misteriosas naves espaciales aterrizan en todo el mundo, una lingüista de élite intenta descifrar su idioma antes de que estalle una guerra global.',
+    baseReason:
+      'Comparte la atmósfera hipnótica, emocional y de ciencia ficción profunda de tus obras favoritas.',
+  },
+  {
+    id: 'rec-bladerunner-2049',
+    title: 'Blade Runner 2049',
+    creator: 'Denis Villeneuve',
+    year: '2017',
+    category: 'Cine',
+    vaultGroup: 'peliculas_series',
+    imdbId: 'tt1856101',
+    imdbRating: '8.0',
+    imageUrl:
+      'https://m.media-amazon.com/images/M/MV5BNzA1Njg4NzYxOV5BMl5BanBnXkFtZTgwODk5NjU3MzI@._V1_SX300.jpg',
+    tags: ['Cyberpunk', 'Sci-Fi', 'Neo-Noir'],
+    affinityKeywords: [
+      'cyberpunk',
+      'sci-fi',
+      'ciencia ficción',
+      'dune',
+      'matrix',
+      'thriller',
+      'estética',
+      'futurista',
+    ],
+    plot: 'El descubrimiento de un secreto enterrado durante mucho tiempo lleva a un joven Blade Runner a buscar a Rick Deckard, desaparecido hace treinta años.',
+    baseReason:
+      'Su estética visual y narrativa introspectiva conectan directamente con el cine de autor y ciencia ficción de tu Bóveda.',
+  },
+  {
+    id: 'rec-severance',
+    title: 'Severance (Separación)',
+    creator: 'Dan Erickson · Ben Stiller',
+    year: '2022',
+    category: 'Serie',
+    vaultGroup: 'peliculas_series',
+    imdbId: 'tt11280740',
+    imdbRating: '8.7',
+    imageUrl:
+      'https://m.media-amazon.com/images/M/MV5BMjkwZjcwMGQtNDAzOC00YjJiLThiYTgtNWU3ZjRiZmY2YzEzXkEyXkFqcGdeQXVyMTMzNDExODE5._V1_SX300.jpg',
+    tags: ['Thriller Psicológico', 'Sci-Fi', 'Misterio'],
+    affinityKeywords: [
+      'serie',
+      'thriller',
+      'misterio',
+      'sci-fi',
+      'psicológico',
+      'dark',
+      'black mirror',
+      'mind-bending',
+    ],
+    plot: 'Mark lidera un equipo de oficinistas cuyos recuerdos han sido divididos quirúrgicamente entre su vida laboral y su vida personal.',
+    baseReason:
+      'Ideal por tu afinidad con historias de misterio inteligente, tensión psicológica y diseño minimalista.',
+  },
+  {
+    id: 'rec-steins-gate',
+    title: 'Steins;Gate',
+    creator: 'White Fox · Hiroshi Hamasaki',
+    year: '2011',
+    category: 'Serie',
+    vaultGroup: 'peliculas_series',
+    imdbId: 'tt1910272',
+    imdbRating: '8.8',
+    imageUrl:
+      'https://m.media-amazon.com/images/M/MV5BMjUxMzE4ZDctODNjMS00MzIwLThjNDktODkwYjc5YWU0MDc0XkEyXkFqcGdeQXVyNjc3OTE4Nzk@._V1_SX300.jpg',
+    tags: ['Anime', 'Viajes en el Tiempo', 'Sci-Fi'],
+    affinityKeywords: [
+      'anime',
+      'frieren',
+      'attack on titan',
+      'sci-fi',
+      'tiempo',
+      'interstellar',
+      'animación',
+      'japonés',
+    ],
+    plot: 'Un grupo de amigos descubre accidentalmente un método para enviar mensajes al pasado, alterando de forma impredecible la línea temporal.',
+    baseReason:
+      'Combina la emoción del mejor anime con una trama brillante de paradojas temporales al estilo Interstellar.',
+  },
+  {
+    id: 'rec-whiplash',
+    title: 'Whiplash: Música y Obsesión',
+    creator: 'Damien Chazelle',
+    year: '2014',
+    category: 'Cine',
+    vaultGroup: 'peliculas_series',
+    imdbId: 'tt2582802',
+    imdbRating: '8.5',
+    imageUrl:
+      'https://m.media-amazon.com/images/M/MV5BOTA5NDZlZGUtMjAxOS00YTRkLTkwYmMtYWQ0NWEwZDZiNjEzXkEyXkFqcGdeQXVyMTMxODk2OTU@._V1_SX300.jpg',
+    tags: ['Drama', 'Música', 'Superación'],
+    affinityKeywords: [
+      'música',
+      'drama',
+      'disciplina',
+      'ritmo',
+      'cine',
+      'intensidad',
+    ],
+    plot: 'Un joven y prometedor baterista de jazz se inscribe en un implacable conservatorio donde su mentor lo lleva al límite de su capacidad.',
+    baseReason:
+      'Por tu enfoque en la maestría de habilidades y tu gusto por el cine intenso y musicalmente impecable.',
+  },
+  {
+    id: 'rec-currents-tame-impala',
+    title: 'Currents',
+    creator: 'Tame Impala',
+    year: '2015',
+    category: 'Música',
+    vaultGroup: 'musica',
+    imageUrl:
+      'https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/a6/22/85/a6228545-85a4-02d5-39b9-68482442c44d/15UMGIM23322.rgb.jpg/600x600bb.jpg',
+    spotifyUrl: 'https://open.spotify.com/search/Currents%20Tame%20Impala',
+    tags: ['Synth-Pop', 'Psicodélico', 'Deep Work'],
+    affinityKeywords: [
+      'daft punk',
+      'synth',
+      'electrónica',
+      'música',
+      'álbum',
+      'indie',
+      'focus',
+      'the weeknd',
+      'm83',
+    ],
+    plot: 'Álbum icónico de sintetizadores analógicos, bajos magnéticos y texturas psicodélicas modernas producidas por Kevin Parker.',
+    baseReason:
+      'Encaja a la perfección con los sintetizadores envolventes y la vibra electrónica de tu colección musical.',
+  },
+  {
+    id: 'rec-hurry-up-tomorrow-m83',
+    title: 'Hurry Up, We’re Dreaming',
+    creator: 'M83',
+    year: '2011',
+    category: 'Música',
+    vaultGroup: 'musica',
+    imageUrl:
+      'https://is1-ssl.mzstatic.com/image/thumb/Music114/v4/78/42/e9/7842e940-8b27-573e-970f-5b3f8a6e2d31/886443157941.jpg/600x600bb.jpg',
+    spotifyUrl:
+      'https://open.spotify.com/search/Hurry%20Up%20We%20Are%20Dreaming%20M83',
+    tags: ['Dream Pop', 'Cinematográfico', 'Synthwave'],
+    affinityKeywords: [
+      'música',
+      'álbum',
+      'synthwave',
+      'electrónica',
+      'nocturno',
+      'épico',
+      'soundtrack',
+      'hans zimmer',
+    ],
+    plot: 'Obra maestra del synth-pop cinematográfico que incluye "Midnight City", ideal para sesiones creativas o nocturnas.',
+    baseReason:
+      'Une el sonido épico de banda sonora cinematográfica con la energía electrónica de tu Bóveda.',
+  },
+  {
+    id: 'rec-tron-legacy-ost',
+    title: 'TRON: Legacy (Original Motion Picture Soundtrack)',
+    creator: 'Daft Punk',
+    year: '2010',
+    category: 'Música',
+    vaultGroup: 'musica',
+    imageUrl:
+      'https://is1-ssl.mzstatic.com/image/thumb/Music125/v4/6b/68/97/6b68971a-39f9-2633-72c0-18952e3a6b60/00050087239640.rgb.jpg/600x600bb.jpg',
+    spotifyUrl: 'https://open.spotify.com/search/Tron%20Legacy%20Daft%20Punk',
+    tags: ['Orquestal', 'Electrónica', 'Sci-Fi Score'],
+    affinityKeywords: [
+      'daft punk',
+      'hans zimmer',
+      'sci-fi',
+      'cyberpunk',
+      'soundtrack',
+      'deep work',
+      'programación',
+    ],
+    plot: 'Fusión magistral entre una orquesta sinfónica de 85 músicos y los sintetizadores futuristas de Daft Punk.',
+    baseReason:
+      'Combina tu gusto por la ciencia ficción visual con el sonido electrónico y orquestal para concentrarte al máximo.',
+  },
+];
+
+export function isRecommendationIntent(prompt: string): boolean {
+  const lower = prompt.trim().toLowerCase();
+  if (!lower) return false;
+  return (
+    lower.includes('recomiend') ||
+    lower.includes('recomendaci') ||
+    lower.includes('sugier') ||
+    lower.includes('sugerencia') ||
+    lower.includes('qué ver') ||
+    lower.includes('que ver') ||
+    lower.includes('qué escuchar') ||
+    lower.includes('que escuchar') ||
+    lower.includes('qué película me') ||
+    lower.includes('que pelicula me') ||
+    lower.includes('qué serie me') ||
+    lower.includes('que serie me') ||
+    lower.includes('qué música me') ||
+    lower.includes('que musica me') ||
+    lower.includes('algo parecido a') ||
+    lower.includes('similar a mi bóveda') ||
+    lower.includes('según mi bóveda') ||
+    lower.includes('segun mi boveda') ||
+    lower.includes('según mis gustos') ||
+    lower.includes('segun mis gustos')
+  );
+}
+
+export function generateVaultBasedRecommendations(
+  prompt: string,
+  vaultItems: any[] = []
+): {
+  replyText: string;
+  recommendations: Array<{
+    id: string;
+    title: string;
+    creator: string;
+    year?: string;
+    category: 'Cine' | 'Serie' | 'Música';
+    vaultGroup: 'peliculas_series' | 'musica';
+    imdbId?: string;
+    imdbRating?: string;
+    imageUrl?: string;
+    spotifyUrl?: string;
+    tags: string[];
+    plot?: string;
+    reason: string;
+  }>;
+} {
+  const lower = prompt.toLowerCase();
+  const wantsOnlyMusic =
+    (lower.includes('música') ||
+      lower.includes('musica') ||
+      lower.includes('canción') ||
+      lower.includes('cancion') ||
+      lower.includes('álbum') ||
+      lower.includes('album') ||
+      lower.includes('escuchar') ||
+      lower.includes('spotify')) &&
+    !lower.includes('película') &&
+    !lower.includes('pelicula') &&
+    !lower.includes('serie') &&
+    !lower.includes('cine') &&
+    !lower.includes('ver');
+
+  const wantsOnlyVisual =
+    (lower.includes('película') ||
+      lower.includes('pelicula') ||
+      lower.includes('serie') ||
+      lower.includes('anime') ||
+      lower.includes('cine') ||
+      lower.includes('ver')) &&
+    !lower.includes('música') &&
+    !lower.includes('musica') &&
+    !lower.includes('escuchar') &&
+    !lower.includes('álbum');
+
+  const existingTitles = new Set(
+    (vaultItems || []).map((v) =>
+      String(v.title || '')
+        .toLowerCase()
+        .trim()
+    )
+  );
+
+  // Extract top titles and favorite tags from the user's Vault
+  const topVaultMovies = (vaultItems || []).filter(
+    (v) =>
+      v.vaultGroup === 'peliculas_series' || v.vaultGroup === 'proximamente'
+  );
+  const topVaultMusic = (vaultItems || []).filter(
+    (v) => v.vaultGroup === 'musica'
+  );
+
+  const allVaultTokens: string[] = [];
+  const favoriteTitlesSample: string[] = [];
+  const favoriteGenresSet = new Set<string>();
+
+  (vaultItems || []).forEach((v) => {
+    if (v.title) {
+      allVaultTokens.push(String(v.title).toLowerCase());
+      if (
+        (v.tier === 'S' || Number(v.rating || 0) >= 8.8) &&
+        favoriteTitlesSample.length < 3
+      ) {
+        favoriteTitlesSample.push(v.title);
+      }
+    }
+    if (v.creator) allVaultTokens.push(String(v.creator).toLowerCase());
+    if (Array.isArray(v.tags)) {
+      v.tags.forEach((t: string) => {
+        allVaultTokens.push(String(t).toLowerCase());
+        if (favoriteGenresSet.size < 4) favoriteGenresSet.add(t);
+      });
+    }
+  });
+
+  const vaultCorpus = allVaultTokens.join(' ');
+  const refMovieTitle =
+    topVaultMovies[0]?.title || favoriteTitlesSample[0] || null;
+  const refMusicTitle = topVaultMusic[0]?.title || null;
+  const genreSummary =
+    Array.from(favoriteGenresSet).slice(0, 3).join(', ') ||
+    'Ciencia Ficción, Drama y Electrónica';
+
+  // Filter out anything already in the user's Vault
+  const availablePool = CURATED_RECOMMENDATION_POOL.filter(
+    (seed) =>
+      !existingTitles.has(seed.title.toLowerCase()) &&
+      !Array.from(existingTitles).some(
+        (saved) =>
+          saved.length > 3 && seed.title.toLowerCase().includes(saved)
+      )
+  );
+
+  const scoredPool = availablePool
+    .map((seed) => {
+      let score = 10;
+      seed.affinityKeywords.forEach((kw) => {
+        if (vaultCorpus.includes(kw)) score += 6;
+        if (lower.includes(kw)) score += 12;
+      });
+      if (wantsOnlyMusic && seed.vaultGroup === 'musica') score += 30;
+      if (wantsOnlyVisual && seed.vaultGroup === 'peliculas_series') score += 30;
+      if (lower.includes('anime') && seed.tags.includes('Anime')) score += 25;
+      if (lower.includes('serie') && seed.category === 'Serie') score += 20;
+      return { seed, score };
+    })
+    .sort((a, b) => b.score - a.score);
+
+  let selectedSeeds: CuratedRecommendationSeed[] = [];
+  if (wantsOnlyMusic) {
+    selectedSeeds = scoredPool
+      .filter((s) => s.seed.vaultGroup === 'musica')
+      .slice(0, 3)
+      .map((s) => s.seed);
+  } else if (wantsOnlyVisual) {
+    selectedSeeds = scoredPool
+      .filter((s) => s.seed.vaultGroup === 'peliculas_series')
+      .slice(0, 3)
+      .map((s) => s.seed);
+  } else {
+    const bestVisual = scoredPool
+      .filter((s) => s.seed.vaultGroup === 'peliculas_series')
+      .slice(0, 2)
+      .map((s) => s.seed);
+    const bestMusic = scoredPool
+      .filter((s) => s.seed.vaultGroup === 'musica')
+      .slice(0, 1)
+      .map((s) => s.seed);
+    selectedSeeds = [...bestVisual, ...bestMusic];
+  }
+
+  if (selectedSeeds.length === 0) {
+    selectedSeeds = CURATED_RECOMMENDATION_POOL.slice(0, 3);
+  }
+
+  const recommendations = selectedSeeds.map((seed) => {
+    let personalizedReason = seed.baseReason;
+    if (seed.vaultGroup === 'peliculas_series' && refMovieTitle) {
+      personalizedReason = `Basado en "${refMovieTitle}" de tu Bóveda: ${seed.baseReason.charAt(0).toLowerCase()}${seed.baseReason.slice(1)}`;
+    } else if (seed.vaultGroup === 'musica' && refMusicTitle) {
+      personalizedReason = `En sintonía con "${refMusicTitle}" en tu Bóveda: ${seed.baseReason.charAt(0).toLowerCase()}${seed.baseReason.slice(1)}`;
+    }
+    return {
+      id: seed.id,
+      title: seed.title,
+      creator: seed.creator,
+      year: seed.year,
+      category: seed.category,
+      vaultGroup: seed.vaultGroup,
+      imdbId: seed.imdbId,
+      imdbRating: seed.imdbRating,
+      imageUrl: seed.imageUrl,
+      spotifyUrl: seed.spotifyUrl,
+      tags: seed.tags,
+      plot: seed.plot,
+      reason: personalizedReason,
+    };
+  });
+
+  const historyIntro =
+    favoriteTitlesSample.length > 0
+      ? `He analizado tu Bóveda (${vaultItems.length} registros, destacando **${favoriteTitlesSample.join(
+          '**, **'
+        )}** y tus géneros clave: *${genreSummary}*).`
+      : `He analizado el perfil estético de tu Bóveda (*${genreSummary}*).`;
+
+  const bulletLines = recommendations
+    .map(
+      (r, idx) =>
+        `${idx + 1}. **${r.title}** (${r.year || r.category} · ${
+          r.creator
+        }) — ${r.reason}`
+    )
+    .join('\n');
+
+  const replyText = `${historyIntro}\n\nAquí tienes mis recomendaciones personalizadas para hoy:\n${bulletLines}\n\n¿Te llama la atención alguna? Puedes guardarla con un toque en su tarjeta o decirme directamente: **"Guárdala en la Bóveda"** o **"Agrégala al Hype Radar"**.`;
+
+  return {
+    replyText,
+    recommendations,
+  };
+}
+
+export function parseRecommendationFollowUp(
+  prompt: string,
+  recentRecommendations: Array<{
+    id: string;
+    title: string;
+    creator: string;
+    year?: string;
+    category: string;
+    vaultGroup: string;
+    imdbId?: string;
+    imdbRating?: string;
+    imageUrl?: string;
+    spotifyUrl?: string;
+    tags: string[];
+    plot?: string;
+    reason?: string;
+  }> = []
+): ParsedAssistantAction[] {
+  if (!recentRecommendations || recentRecommendations.length === 0) return [];
+  const trimmed = prompt.trim();
+  const lower = trimmed.toLowerCase();
+
+  const isSaveFollowUp =
+    /(?:gu[aá]rdal[ao]s?|agr[eé]gal[ao]s?|a[nñ][aá]del[ao]s?|ponl[ao]s?|registra\s+esa|guarda\s+esa|guarda\s+la\s+recomendaci[oó]n|agrega\s+la\s+recomendaci[oó]n|guarda\s+la\s+primera|guarda\s+la\s+segunda|guarda\s+la\s+tercera|agrega\s+la\s+primera|agrega\s+la\s+segunda|agrega\s+la\s+tercera)/i.test(
+      lower
+    ) ||
+    ((lower.includes('bóveda') ||
+      lower.includes('boveda') ||
+      lower.includes('hype radar') ||
+      lower.includes('próximamente') ||
+      lower.includes('proximamente')) &&
+      recentRecommendations.some((r) =>
+        lower.includes(r.title.toLowerCase().split('(')[0].trim())
+      ));
+
+  if (!isSaveFollowUp) return [];
+
+  const wantsHypeRadar =
+    lower.includes('hype radar') ||
+    lower.includes('próximamente') ||
+    lower.includes('proximamente') ||
+    lower.includes('en espera') ||
+    lower.includes('estreno');
+
+  let matchedRecs = recentRecommendations.filter((r) => {
+    const cleanRecTitle = r.title.toLowerCase().split('(')[0].trim();
+    return cleanRecTitle.length > 2 && lower.includes(cleanRecTitle);
+  });
+
+  if (matchedRecs.length === 0) {
+    if (lower.includes('segunda') && recentRecommendations[1]) {
+      matchedRecs = [recentRecommendations[1]];
+    } else if (lower.includes('tercera') && recentRecommendations[2]) {
+      matchedRecs = [recentRecommendations[2]];
+    } else if (
+      (lower.includes('música') ||
+        lower.includes('musica') ||
+        lower.includes('álbum') ||
+        lower.includes('album') ||
+        lower.includes('canción')) &&
+      recentRecommendations.some((r) => r.vaultGroup === 'musica')
+    ) {
+      matchedRecs = [
+        recentRecommendations.find((r) => r.vaultGroup === 'musica')!,
+      ];
+    } else if (
+      lower.includes('todas') ||
+      lower.includes('guárdalas') ||
+      lower.includes('guardalas') ||
+      lower.includes('agrégalas') ||
+      lower.includes('agregalas')
+    ) {
+      matchedRecs = recentRecommendations;
+    } else {
+      matchedRecs = [recentRecommendations[0]];
+    }
+  }
+
+  return matchedRecs.map((rec) => {
+    const targetGroup = wantsHypeRadar
+      ? 'proximamente'
+      : (rec.vaultGroup as any) || 'peliculas_series';
+    const targetCategory = wantsHypeRadar
+      ? 'Próximamente'
+      : rec.category || 'Cine';
+
+    return {
+      name: 'addVaultItem' as const,
+      args: {
+        title: rec.title,
+        creator: rec.creator,
+        vaultGroup: targetGroup,
+        category: targetCategory,
+        rating: 9.5,
+        tier: 'S',
+        tags: rec.tags || [targetCategory, 'Recomendación IA'],
+        review: rec.plot || rec.reason || 'Recomendada por Aether Assistant.',
+        plot: rec.plot,
+        imdbId: rec.imdbId,
+        imdbRating: rec.imdbRating,
+        imageUrl: rec.imageUrl,
+        releaseYear: rec.year,
+        skipConfirmation: true,
+      },
+    };
+  });
+}
+
 export function buildContextualReply(actions: ParsedAssistantAction[]): string {
   if (!actions || actions.length === 0) {
-    return '¡Hola! Puedo guardar películas, series o música de Spotify en tu Bóveda, registrar prácticas de Básquet, Fútbol o estudios con XP en tus Habilidades, añadir metas a tu Wishlist o agendar partidos y eventos en tu Google Calendar.';
+    return '¡Hola! Puedo analizar tu Bóveda para recomendarte películas, series o música según tus gustos, guardar contenidos en tu Bóveda o Hype Radar, registrar prácticas en tus Habilidades o agendar eventos en tu Calendario.';
   }
 
   const summaries = actions.map((act) => {
@@ -640,7 +1220,7 @@ export function buildContextualReply(actions: ParsedAssistantAction[]): string {
         } a tu sección de Música en la Bóveda con su carátula oficial y enlace directo a Spotify.`;
       }
       if (a.vaultGroup === 'proximamente') {
-        return `¡Listo! He registrado **${a.title}** en tu radar de Próximamente en la Bóveda.`;
+        return `¡Listo! He registrado **${a.title}** en tu **Hype Radar (Próximamente)** dentro de la Bóveda.`;
       }
       return `¡Listo, guardado en tu Bóveda! He registrado **${a.title}** con calificación **${
         a.rating ?? 9.5

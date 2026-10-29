@@ -23,11 +23,13 @@ import {
   Eye,
   Hourglass,
   Star,
+  Sparkles,
 } from 'lucide-react';
 import {
   AssistantConversation,
   AssistantPendingConfirmation,
   AssistantPendingMediaCandidate,
+  AssistantRecommendationItem,
   ChatMessage,
   SkillItem,
   VaultItem,
@@ -40,6 +42,8 @@ import {
 import {
   parseNaturalLanguageCommand,
   buildContextualReply,
+  generateVaultBasedRecommendations,
+  isRecommendationIntent,
 } from '../services/assistantParser';
 import {
   findBestMediaMatch,
@@ -76,12 +80,13 @@ const INITIAL_MESSAGES: ChatMessage[] = [
     id: 'msg-welcome',
     role: 'assistant',
     content:
-      '¿Qué quieres guardar o agendar hoy? Puedo registrar películas, música de Spotify, entrenamientos o eventos en tu calendario.',
+      '¿Qué quieres guardar, agendar o descubrir hoy? Puedo analizar tu Bóveda para recomendarte películas, series o música afines a tus gustos, o registrar lo que me pidas en Firestore.',
     timestamp: 'Ahora',
   },
 ];
 
 const QUICK_PROMPTS = [
+  '¿Qué película o música me recomiendas ver/escuchar hoy?',
   'Quiero agregar Joe Black a mi Bóveda',
   'Guarda la película Interstellar con nota 9.5 en la Bóveda',
   'Añade el álbum Random Access Memories de Daft Punk a mi música',
@@ -591,6 +596,77 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
     await persistThread(nextThread, 'Búsqueda en Bóveda');
   };
 
+  // Direct 1-click handler on an AI Recommendation Card ("Guardar en Bóveda" or "Al Hype Radar")
+  const handleSaveRecommendationCard = async (
+    messageId: string,
+    rec: AssistantRecommendationItem,
+    targetGroup: Exclude<VaultFilterId, 'todo'>
+  ) => {
+    if (isLoading) return;
+    setIsLoading(true);
+    try {
+      const actionPayload = {
+        name: 'addVaultItem',
+        args: {
+          title: rec.title,
+          creator: rec.creator,
+          vaultGroup: targetGroup,
+          category:
+            targetGroup === 'proximamente'
+              ? 'Próximamente'
+              : rec.category || 'Cine',
+          rating: 9.5,
+          tier: 'S',
+          tags: rec.tags || [rec.category || 'Cine', 'Recomendación IA'],
+          review:
+            rec.plot || rec.reason || 'Recomendada por Aether Assistant.',
+          plot: rec.plot,
+          imdbId: rec.imdbId,
+          imdbRating: rec.imdbRating,
+          imageUrl: rec.imageUrl,
+          releaseYear: rec.year,
+        },
+      };
+
+      const record = await onExecuteAction(actionPayload);
+      const confirmMsg: ChatMessage = {
+        id: `ai-rec-save-${Date.now()}`,
+        role: 'assistant',
+        content: `¡Excelente elección! He guardado "${rec.title}" en tu ${
+          targetGroup === 'proximamente'
+            ? 'Hype Radar (Próximamente)'
+            : targetGroup === 'musica'
+            ? 'Bóveda de Música'
+            : 'Bóveda de Experiencias'
+        } en Firestore.`,
+        timestamp: new Date().toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        actionsTaken: record ? [record] : undefined,
+      };
+
+      const updatedMessages = messages
+        .map((m) =>
+          m.id === messageId && m.recommendations
+            ? {
+                ...m,
+                recommendations: m.recommendations.map((r) =>
+                  r.id === rec.id ? { ...r, savedToGroup: targetGroup } : r
+                ),
+              }
+            : m
+        )
+        .concat(confirmMsg);
+
+      setMessages(updatedMessages);
+      triggerAssistantSpeakingWave(confirmMsg.content);
+      await persistThread(updatedMessages, rec.title);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSend = async (promptText?: string) => {
     const rawValue =
       promptText !== undefined
@@ -631,7 +707,21 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
         /^(?:no|nop|otra|buscar\s+otra|esa\s+no|cancelar)\b/i.test(
           normalizedReply
         );
+      const isHypeRadarReply =
+        /(?:al\s+hype\s+radar|en\s+hype\s+radar|en\s+pr[oó]ximamente|agr[eé]gala\s+al\s+hype\s+radar)/i.test(
+          normalizedReply
+        );
 
+      if (isHypeRadarReply) {
+        isSubmittingRef.current = false;
+        await handleConfirmPendingAction(
+          lastPendingMsg.id,
+          lastPendingMsg.pendingConfirmation,
+          undefined,
+          'proximamente'
+        );
+        return;
+      }
       if (isAffirmative) {
         isSubmittingRef.current = false;
         await handleConfirmPendingAction(
@@ -650,6 +740,27 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
       }
     }
 
+    // Collect recent recommendations from the latest recommendation turn
+    const lastRecsMsg = [...messages]
+      .reverse()
+      .find(
+        (m) =>
+          m.role === 'assistant' &&
+          Array.isArray(m.recommendations) &&
+          m.recommendations.length > 0
+      );
+    const recentRecommendations = lastRecsMsg?.recommendations || [];
+
+    const vaultDigest = vault.map((v) => ({
+      title: v.title,
+      creator: v.creator,
+      category: v.category,
+      vaultGroup: v.vaultGroup,
+      rating: v.rating,
+      tier: v.tier,
+      tags: v.tags,
+    }));
+
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -667,6 +778,9 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
     try {
       let rawActions: Array<{ name: string; args: any }> = [];
       let assistantReply = '';
+      let recommendationsList: AssistantRecommendationItem[] | undefined;
+
+      const askingForRecs = isRecommendationIntent(textToSend);
 
       try {
         const res = await fetch('/api/assistant', {
@@ -683,6 +797,8 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                 hours: s.hoursInvested,
               })),
               vaultCount: vault.length,
+              vaultItems: vaultDigest,
+              recentRecommendations,
               wishlistCount: wishlist.length,
               extraSavingsPool,
               scheduleToday: schedule.map((b) => ({
@@ -705,17 +821,45 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
           const data = await res.json();
           rawActions = Array.isArray(data.actions) ? data.actions : [];
           assistantReply = data.reply || '';
+          if (
+            Array.isArray(data.recommendations) &&
+            data.recommendations.length > 0
+          ) {
+            recommendationsList = data.recommendations;
+          }
         } else {
-          rawActions = parseNaturalLanguageCommand(textToSend, { skills });
+          rawActions = parseNaturalLanguageCommand(textToSend, {
+            skills,
+            vaultItems: vaultDigest,
+            recentRecommendations,
+          });
           assistantReply = buildContextualReply(rawActions);
         }
       } catch {
-        rawActions = parseNaturalLanguageCommand(textToSend, { skills });
+        rawActions = parseNaturalLanguageCommand(textToSend, {
+          skills,
+          vaultItems: vaultDigest,
+          recentRecommendations,
+        });
         assistantReply = buildContextualReply(rawActions);
       }
 
-      if (rawActions.length === 0) {
-        rawActions = parseNaturalLanguageCommand(textToSend, { skills });
+      if (askingForRecs && (!recommendationsList || recommendationsList.length === 0)) {
+        const localRecBundle = generateVaultBasedRecommendations(
+          textToSend,
+          vaultDigest
+        );
+        recommendationsList = localRecBundle.recommendations;
+        if (!assistantReply) {
+          assistantReply = localRecBundle.replyText;
+        }
+        rawActions = [];
+      } else if (rawActions.length === 0 && !askingForRecs) {
+        rawActions = parseNaturalLanguageCommand(textToSend, {
+          skills,
+          vaultItems: vaultDigest,
+          recentRecommendations,
+        });
         if (!assistantReply) {
           assistantReply = buildContextualReply(rawActions);
         }
@@ -723,14 +867,38 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
 
       const executedRecords: AssistantActionRecord[] = [];
       let pendingConfirmationData: AssistantPendingConfirmation | undefined;
+      const savedRecommendationTitles = new Map<
+        string,
+        Exclude<VaultFilterId, 'todo'>
+      >();
 
       for (const act of rawActions) {
         const vaultGroup: Exclude<VaultFilterId, 'todo'> =
           act.args?.vaultGroup || 'peliculas_series';
 
-        // Smart Double Confirmation for Vault Media (Películas, Series, Próximamente, Música)
+        // Check if this action matches one of the recent recommendations or has skipConfirmation
+        const matchingRec = recentRecommendations.find(
+          (r) =>
+            r.title.toLowerCase().trim() ===
+              String(act.args?.title || '').toLowerCase().trim() ||
+            r.title
+              .toLowerCase()
+              .includes(String(act.args?.title || '').toLowerCase().trim())
+        );
+        const shouldSkipDoubleConfirmation =
+          Boolean(act.args?.skipConfirmation) || Boolean(matchingRec);
+
+        if (matchingRec) {
+          savedRecommendationTitles.set(
+            matchingRec.title.toLowerCase(),
+            vaultGroup
+          );
+        }
+
+        // Smart Double Confirmation for ambiguous Vault Media (skipped when saving an explicit AI recommendation)
         const isMediaVaultAction =
           act.name === 'addVaultItem' &&
+          !shouldSkipDoubleConfirmation &&
           (vaultGroup === 'peliculas_series' ||
             vaultGroup === 'proximamente' ||
             vaultGroup === 'musica');
@@ -842,9 +1010,27 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
         }),
         actionsTaken: executedRecords.length > 0 ? executedRecords : undefined,
         pendingConfirmation: pendingConfirmationData,
+        recommendations: recommendationsList,
       };
 
-      const completeThread = [...nextMessagesWithUser, assistantMsg];
+      const updatedHistoryWithRecBadges =
+        savedRecommendationTitles.size > 0
+          ? nextMessagesWithUser.map((m) =>
+              m.recommendations
+                ? {
+                    ...m,
+                    recommendations: m.recommendations.map((r) => {
+                      const savedGroup = savedRecommendationTitles.get(
+                        r.title.toLowerCase()
+                      );
+                      return savedGroup ? { ...r, savedToGroup: savedGroup } : r;
+                    }),
+                  }
+                : m
+            )
+          : nextMessagesWithUser;
+
+      const completeThread = [...updatedHistoryWithRecBadges, assistantMsg];
       setMessages(completeThread);
       triggerAssistantSpeakingWave(finalReplyText);
       await persistThread(completeThread, textToSend);
@@ -1282,6 +1468,189 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                         )}
                     </div>
                   )}
+
+                {/* Tarjetas Interactivas del Recomendador Inteligente de Entretenimiento */}
+                {msg.recommendations && msg.recommendations.length > 0 && (
+                  <div className="mt-3 space-y-2.5">
+                    {msg.recommendations.map((rec, rIdx) => {
+                      const isMint = rIdx % 2 === 0;
+                      const isMusicRec = rec.vaultGroup === 'musica';
+
+                      return (
+                        <div
+                          key={`${rec.id}-${rIdx}`}
+                          className="rounded-[20px] p-3.5 text-[#141519] keep-dark-text shadow-[0_4px_20px_-4px_rgba(19,25,39,0.06)] transition-all"
+                          style={{
+                            background: isMint
+                              ? 'linear-gradient(135deg, #98E2DE 0%, #CDF4F2 50%, #A2E5E1 100%)'
+                              : 'linear-gradient(135deg, #AEBDF6 0%, #DAE2FC 50%, #B5C2F7 100%)',
+                            border: '2px solid rgba(255, 255, 255, 0.78)',
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-2.5">
+                            <div
+                              onClick={() => {
+                                if (onPreviewMedia) {
+                                  onPreviewMedia({
+                                    searchResult: {
+                                      id: rec.id,
+                                      title: rec.title,
+                                      creator: rec.creator,
+                                      year: rec.year || '',
+                                      imdbId: rec.imdbId,
+                                      imdbRating: rec.imdbRating,
+                                      plot: rec.plot || rec.reason,
+                                      imageUrl: rec.imageUrl,
+                                      tags: rec.tags,
+                                      mediaType: isMusicRec
+                                        ? 'album'
+                                        : rec.category === 'Serie'
+                                        ? 'series'
+                                        : 'movie',
+                                      sourceLabel: 'Recomendación IA',
+                                    },
+                                  });
+                                }
+                              }}
+                              className="flex items-start gap-3 min-w-0 cursor-pointer group"
+                            >
+                              {rec.imageUrl ? (
+                                <img
+                                  src={rec.imageUrl}
+                                  alt={rec.title}
+                                  className="w-13 h-18 rounded-[14px] object-cover border border-white/80 shadow-xs shrink-0 bg-white group-hover:scale-105 transition-transform"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <div className="w-12 h-16 rounded-[14px] bg-white flex items-center justify-center shadow-xs shrink-0 border border-white/80">
+                                  {isMusicRec ? (
+                                    <Music className="w-5 h-5 text-[#141519]" />
+                                  ) : (
+                                    <Film className="w-5 h-5 text-[#141519]" />
+                                  )}
+                                </div>
+                              )}
+
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap text-[0.66rem] font-bold text-[#141519]">
+                                  <span className="px-2 py-0.5 rounded-full bg-white/80 text-[#141519] inline-flex items-center gap-1">
+                                    <Sparkles className="w-2.5 h-2.5" />
+                                    {rec.category}
+                                    {rec.year ? ` · ${rec.year}` : ''}
+                                  </span>
+                                  {rec.imdbRating && (
+                                    <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full bg-[#141519] text-white tabular-nums">
+                                      <Star className="w-2.5 h-2.5 fill-[#A8E6E3] text-[#A8E6E3]" />
+                                      IMDb {rec.imdbRating}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <h4 className="text-[0.92rem] font-bold text-[#141519] mt-1 leading-snug">
+                                  {rec.title}
+                                </h4>
+                                <p className="text-[0.73rem] font-semibold text-[#141519]/80 truncate">
+                                  {rec.creator}
+                                </p>
+                              </div>
+                            </div>
+
+                            {onPreviewMedia && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onPreviewMedia({
+                                    searchResult: {
+                                      id: rec.id,
+                                      title: rec.title,
+                                      creator: rec.creator,
+                                      year: rec.year || '',
+                                      imdbId: rec.imdbId,
+                                      imdbRating: rec.imdbRating,
+                                      plot: rec.plot || rec.reason,
+                                      imageUrl: rec.imageUrl,
+                                      tags: rec.tags,
+                                      mediaType: isMusicRec
+                                        ? 'album'
+                                        : rec.category === 'Serie'
+                                        ? 'series'
+                                        : 'movie',
+                                      sourceLabel: 'Recomendación IA',
+                                    },
+                                  })
+                                }
+                                title="Ver ficha completa"
+                                className="px-2.5 py-1 rounded-full bg-white/80 hover:bg-white text-[#141519] text-[0.66rem] font-bold flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Ficha</span>
+                              </button>
+                            )}
+                          </div>
+
+                          <div
+                            style={{
+                              backgroundColor: 'rgba(255, 255, 255, 0.42)',
+                            }}
+                            className="mt-2.5 p-2.5 rounded-[14px] border border-white/60 text-[0.73rem] font-medium text-[#141519] leading-relaxed"
+                          >
+                            <span className="font-bold">✨ Afinidad: </span>
+                            {rec.reason}
+                          </div>
+
+                          <div className="mt-2.5 pt-2 border-t border-white/50 flex flex-wrap items-center gap-2">
+                            {rec.savedToGroup ? (
+                              <span className="h-8 px-3 rounded-full bg-[#141519] text-white text-[0.72rem] font-bold inline-flex items-center gap-1.5">
+                                <Check className="w-3.5 h-3.5 text-[#A8E6E3]" />
+                                <span>
+                                  {rec.savedToGroup === 'proximamente'
+                                    ? 'Guardada en Hype Radar'
+                                    : 'Guardada en Bóveda'}
+                                </span>
+                              </span>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={isLoading}
+                                  onClick={() =>
+                                    handleSaveRecommendationCard(
+                                      msg.id,
+                                      rec,
+                                      rec.vaultGroup
+                                    )
+                                  }
+                                  className="h-8 px-3 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.72rem] font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                                >
+                                  <Plus className="w-3.5 h-3.5 text-[#A8E6E3]" />
+                                  <span>Guardar en Bóveda</span>
+                                </button>
+
+                                {!isMusicRec && (
+                                  <button
+                                    type="button"
+                                    disabled={isLoading}
+                                    onClick={() =>
+                                      handleSaveRecommendationCard(
+                                        msg.id,
+                                        rec,
+                                        'proximamente'
+                                      )
+                                    }
+                                    className="h-8 px-3 rounded-full bg-white/85 hover:bg-white text-[#141519] text-[0.7rem] font-bold inline-flex items-center gap-1 transition-colors cursor-pointer"
+                                  >
+                                    <Hourglass className="w-3 h-3" />
+                                    <span>Al Hype Radar</span>
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Tarjetas Soft Bento en Miniatura */}
                 {msg.actionsTaken && msg.actionsTaken.length > 0 && (
