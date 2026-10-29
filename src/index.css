@@ -489,3 +489,26 @@
     background-color 0.25s ease,
     color 0.25s ease;
 }
+
+/* ============================================================================
+   OPTIMIZACIÓN MOBILE-FIRST & TOUCH-FRIENDLY UI
+============================================================================ */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (max-width: 640px) {
+  html,
+  body {
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .app-canvas-container {
+    border-radius: 24px;
+  }
+}

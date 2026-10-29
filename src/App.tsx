@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ArrowUpRight,
-  BarChart3,
   Bell,
   BookMarked,
   Calendar as CalendarIcon,
@@ -58,7 +57,6 @@ import {
   BentoHeader,
   CalendarMatrix,
   PastelSkillCard,
-  PillBarChart,
   SoftBentoEmptyState,
   TimelineSchedule,
 } from './components/BentoPrimitives';
@@ -247,8 +245,6 @@ export default function App() {
   const [activity, setActivity] = useState<DailyActivity[]>(() =>
     readLocalBackup(LS_KEYS.activity, INITIAL_ACTIVITY)
   );
-  const [selectedActivityDate, setSelectedActivityDate] =
-    useState<number>(todayDateNum);
   const [vault, setVault] = useState<VaultItem[]>(() =>
     readLocalBackup(LS_KEYS.vault, INITIAL_VAULT)
   );
@@ -1620,14 +1616,6 @@ export default function App() {
     showNotification('Backup JSON de Aether descargado correctamente');
   };
 
-  const selectedActivityObj =
-    activity.find((d) => d.dateNum === selectedActivityDate) ||
-    activity[activity.length - 1];
-
-  const totalWeeklyHours = activity
-    .reduce((acc, d) => acc + d.hours, 0)
-    .toFixed(1);
-
   const totalGlobalHours = Math.round(
     skills.reduce((acc, s) => acc + s.hoursInvested, 0)
   );
@@ -1702,214 +1690,241 @@ export default function App() {
 
   return (
     <div
-      className={`min-h-screen p-2 sm:p-5 pb-24 md:pb-8 transition-colors duration-200 ${
+      className={`min-h-screen w-full overflow-x-hidden p-2 sm:p-5 pb-28 md:pb-8 transition-colors duration-200 ${
         themeMode === 'dark' ? 'theme-dark bg-[#0D0E12]' : 'bg-[#EBF0F5]'
       }`}
     >
       {/* Outer App Container (#F3F6F8 in Light, #141519 in Dark, rounded-[32px], max-w-[1440px]) */}
-      <div className="app-canvas-container max-w-[1440px] mx-auto bg-[#F3F6F8] rounded-[32px] p-4 sm:p-6 border border-white/80 shadow-bento transition-colors duration-200">
+      <div className="app-canvas-container max-w-[1440px] mx-auto bg-[#F3F6F8] rounded-[24px] sm:rounded-[32px] p-3.5 sm:p-6 border border-white/80 shadow-bento transition-colors duration-200">
         {/* ====================================================================
             TOP BAR: FLOATING DIRECTLY ON #F3F6F8 (NO WHITE CONTAINER BOX)
         ==================================================================== */}
-        <header className="flex items-center justify-between gap-4 mb-7 relative">
-          {/* Left: Logo + Individual Pill Tabs */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <button
-              type="button"
-              onClick={() => setActiveTab('dashboard')}
-              className="flex items-center gap-2.5 mr-2 cursor-pointer shrink-0"
-            >
-              <span className="w-9 h-9 rounded-full bg-[#A8E6E3] border-2 border-[#141519] flex items-center justify-center text-[#141519] keep-dark-text shadow-2xs">
-                <Compass className="w-4 h-4 stroke-[2.2]" />
-              </span>
-              <span className="text-[1.15rem] font-bold tracking-tight text-[#141519] whitespace-nowrap">
-                Aether
-              </span>
-            </button>
-
-            <nav className="hidden md:flex items-center gap-2">
-              {navItems.map((item) => {
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveTab(item.id)}
-                    className={`rounded-full px-4 py-2.5 text-[0.83rem] font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                      isActive
-                        ? 'bg-[#141519] text-white shadow-xs ring-1 ring-white/15'
-                        : 'bg-[#FFFFFF] text-[#6E7480] hover:text-[#141519] shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)]'
-                    }`}
-                  >
-                    {item.icon}
-                    <span>{item.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* Right: Iniciar sesión / Auth Pill + Bell Popover + Theme Switcher Pill + Profile Modal */}
-          <div className="flex items-center gap-2.5 shrink-0 relative">
-            {authUser ? (
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() =>
-                    hasGoogleToken
-                      ? syncGoogleWorkspaceData()
-                      : handleConnectGoogleWorkspace()
-                  }
-                  title="Sincronizar cuenta de Google"
-                  className="h-10 pl-2 pr-3.5 rounded-full bg-[#FFFFFF] hover:bg-[#F7F9FB] text-[#141519] text-[0.76rem] font-semibold flex items-center gap-2 shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] cursor-pointer"
-                >
-                  {authUser.photoURL ? (
-                    <img
-                      src={authUser.photoURL}
-                      alt={authUser.displayName || 'Usuario'}
-                      className="w-6 h-6 rounded-full object-cover border border-[#141519]/20"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <span className="w-6 h-6 rounded-full bg-[#A8E6E3] text-[#141519] keep-dark-text text-[0.68rem] font-bold flex items-center justify-center">
-                      {userProfile.initials}
-                    </span>
-                  )}
-                  <span className="hidden sm:inline max-w-[110px] truncate">
-                    {authUser.displayName?.split(' ')[0] || userProfile.name}
-                  </span>
-                  <span className="w-2 h-2 rounded-full bg-[#6CD4CE] shrink-0" />
-                  {isSyncingGoogle && (
-                    <RefreshCw className="w-3.5 h-3.5 text-[#6E7480] animate-spin" />
-                  )}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  title="Cerrar sesión"
-                  aria-label="Cerrar sesión"
-                  className="h-10 px-3 rounded-full bg-[#FFFFFF] hover:bg-[#F7F9FB] text-[#6E7480] hover:text-[#141519] text-[0.75rem] font-semibold flex items-center gap-1.5 shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span className="hidden lg:inline">Salir</span>
-                </button>
-              </div>
-            ) : (
+        <header className="mb-5 sm:mb-7 relative">
+          <div className="flex items-center justify-between gap-2 sm:gap-4">
+            {/* Left: Logo + Individual Pill Tabs */}
+            <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
               <button
                 type="button"
-                onClick={handleConnectGoogleWorkspace}
-                title="Iniciar sesión con Google"
-                className="h-10 px-4 rounded-full bg-[#FFFFFF] hover:bg-[#A8E6E3]/40 text-[#141519] text-[0.78rem] font-bold flex items-center gap-2 shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] transition-colors cursor-pointer"
+                onClick={() => setActiveTab('dashboard')}
+                className="flex items-center gap-2 sm:gap-2.5 mr-1 sm:mr-2 cursor-pointer shrink-0 min-h-[40px]"
               >
-                <UserIcon className="w-4 h-4 text-[#141519]" />
-                <span>Iniciar sesión</span>
-              </button>
-            )}
-
-            {/* 1. Circular white notification button */}
-            <button
-              type="button"
-              onClick={() => setIsNotificationsOpen((prev) => !prev)}
-              aria-label="Abrir centro de notificaciones"
-              title="Centro de Notificaciones"
-              className={`relative w-10 h-10 rounded-full bg-[#FFFFFF] text-[#141519] hover:bg-[#F7F9FB] flex items-center justify-center shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] transition-all cursor-pointer ${
-                isNotificationsOpen ? 'ring-2 ring-[#A8E6E3]' : ''
-              }`}
-            >
-              <Bell className="w-4 h-4" />
-              {unreadNotifCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#6CD4CE] text-[#141519] keep-dark-text text-[0.65rem] font-bold flex items-center justify-center border-2 border-white tabular-nums">
-                  {unreadNotifCount}
+                <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#A8E6E3] border-2 border-[#141519] flex items-center justify-center text-[#141519] keep-dark-text shadow-2xs shrink-0">
+                  <Compass className="w-4 h-4 stroke-[2.2]" />
                 </span>
+                <span className="text-[1.1rem] sm:text-[1.15rem] font-bold tracking-tight text-[#141519] whitespace-nowrap">
+                  Aether
+                </span>
+              </button>
+
+              <nav className="hidden md:flex items-center gap-2">
+                {navItems.map((item) => {
+                  const isActive = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setActiveTab(item.id)}
+                      className={`rounded-full px-4 py-2.5 text-[0.83rem] font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                        isActive
+                          ? 'bg-[#141519] text-white shadow-xs ring-1 ring-white/15'
+                          : 'bg-[#FFFFFF] text-[#6E7480] hover:text-[#141519] shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)]'
+                      }`}
+                    >
+                      {item.icon}
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+
+            {/* Right: Iniciar sesión / Auth Pill + Bell Popover + Theme Switcher Pill + Profile Modal */}
+            <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0 relative">
+              {authUser ? (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      hasGoogleToken
+                        ? syncGoogleWorkspaceData()
+                        : handleConnectGoogleWorkspace()
+                    }
+                    title="Sincronizar cuenta de Google"
+                    className="h-10 pl-2 pr-2.5 sm:pr-3.5 rounded-full bg-[#FFFFFF] hover:bg-[#F7F9FB] text-[#141519] text-[0.76rem] font-semibold flex items-center gap-1.5 sm:gap-2 shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] cursor-pointer"
+                  >
+                    {authUser.photoURL ? (
+                      <img
+                        src={authUser.photoURL}
+                        alt={authUser.displayName || 'Usuario'}
+                        className="w-6 h-6 rounded-full object-cover border border-[#141519]/20"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <span className="w-6 h-6 rounded-full bg-[#A8E6E3] text-[#141519] keep-dark-text text-[0.68rem] font-bold flex items-center justify-center">
+                        {userProfile.initials}
+                      </span>
+                    )}
+                    <span className="hidden sm:inline max-w-[110px] truncate">
+                      {authUser.displayName?.split(' ')[0] || userProfile.name}
+                    </span>
+                    <span className="w-2 h-2 rounded-full bg-[#6CD4CE] shrink-0" />
+                    {isSyncingGoogle && (
+                      <RefreshCw className="w-3.5 h-3.5 text-[#6E7480] animate-spin" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    title="Cerrar sesión"
+                    aria-label="Cerrar sesión"
+                    className="h-10 w-10 sm:w-auto sm:px-3 rounded-full bg-[#FFFFFF] hover:bg-[#F7F9FB] text-[#6E7480] hover:text-[#141519] text-[0.75rem] font-semibold flex items-center justify-center gap-1.5 shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span className="hidden lg:inline">Salir</span>
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleConnectGoogleWorkspace}
+                  title="Iniciar sesión con Google"
+                  className="h-10 px-3 sm:px-4 rounded-full bg-[#FFFFFF] hover:bg-[#A8E6E3]/40 text-[#141519] text-[0.75rem] sm:text-[0.78rem] font-bold flex items-center gap-1.5 sm:gap-2 shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] transition-colors cursor-pointer"
+                >
+                  <UserIcon className="w-4 h-4 text-[#141519] shrink-0" />
+                  <span className="hidden xs:inline sm:inline">Iniciar sesión</span>
+                </button>
               )}
-            </button>
 
-            <NotificationsPopover
-              isOpen={isNotificationsOpen}
-              onClose={() => setIsNotificationsOpen(false)}
-              notifications={notifications}
-              onMarkAsRead={(id) =>
-                setNotifications((prev) =>
-                  prev.map((n) => (n.id === id ? { ...n, read: true } : n))
-                )
-              }
-              onMarkAllAsRead={() =>
-                setNotifications((prev) =>
-                  prev.map((n) => ({ ...n, read: true }))
-                )
-              }
-              onDeleteNotification={(id) =>
-                setNotifications((prev) => prev.filter((n) => n.id !== id))
-              }
-              onClearAll={() => setNotifications([])}
-              onSelectNotification={(item) => {
-                setNotifications((prev) =>
-                  prev.map((n) => (n.id === item.id ? { ...n, read: true } : n))
-                );
-                setActiveTab(item.targetTab);
-                setIsNotificationsOpen(false);
-              }}
-            />
+              {/* 1. Circular white notification button */}
+              <button
+                type="button"
+                onClick={() => setIsNotificationsOpen((prev) => !prev)}
+                aria-label="Abrir centro de notificaciones"
+                title="Centro de Notificaciones"
+                className={`relative w-10 h-10 rounded-full bg-[#FFFFFF] text-[#141519] hover:bg-[#F7F9FB] flex items-center justify-center shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] transition-all cursor-pointer shrink-0 ${
+                  isNotificationsOpen ? 'ring-2 ring-[#A8E6E3]' : ''
+                }`}
+              >
+                <Bell className="w-4 h-4" />
+                {unreadNotifCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#6CD4CE] text-[#141519] keep-dark-text text-[0.65rem] font-bold flex items-center justify-center border-2 border-white tabular-nums">
+                    {unreadNotifCount}
+                  </span>
+                )}
+              </button>
 
-            {/* 2. White pill theme switcher with active black circle (Sun = Light / Moon = Dark) */}
-            <button
-              type="button"
-              onClick={() => {
-                const next = themeMode === 'light' ? 'dark' : 'light';
-                setThemeMode(next);
-                showNotification(
-                  next === 'dark'
-                    ? 'Modo Oscuro Charcoal activado'
-                    : 'Modo Claro Soft Bento activado'
-                );
-              }}
-              aria-label="Alternar modo claro u oscuro"
-              title={
-                themeMode === 'light'
-                  ? 'Cambiar a Modo Oscuro'
-                  : 'Cambiar a Modo Claro'
-              }
-              className="h-10 px-1.5 rounded-full bg-[#FFFFFF] flex items-center gap-1 shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] cursor-pointer border border-transparent hover:border-[#EEF1F5]"
-            >
-              <span
-                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+              <NotificationsPopover
+                isOpen={isNotificationsOpen}
+                onClose={() => setIsNotificationsOpen(false)}
+                notifications={notifications}
+                onMarkAsRead={(id) =>
+                  setNotifications((prev) =>
+                    prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+                  )
+                }
+                onMarkAllAsRead={() =>
+                  setNotifications((prev) =>
+                    prev.map((n) => ({ ...n, read: true }))
+                  )
+                }
+                onDeleteNotification={(id) =>
+                  setNotifications((prev) => prev.filter((n) => n.id !== id))
+                }
+                onClearAll={() => setNotifications([])}
+                onSelectNotification={(item) => {
+                  setNotifications((prev) =>
+                    prev.map((n) => (n.id === item.id ? { ...n, read: true } : n))
+                  );
+                  setActiveTab(item.targetTab);
+                  setIsNotificationsOpen(false);
+                }}
+              />
+
+              {/* 2. White pill theme switcher with active black circle (Sun = Light / Moon = Dark) */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = themeMode === 'light' ? 'dark' : 'light';
+                  setThemeMode(next);
+                  showNotification(
+                    next === 'dark'
+                      ? 'Modo Oscuro Charcoal activado'
+                      : 'Modo Claro Soft Bento activado'
+                  );
+                }}
+                aria-label="Alternar modo claro u oscuro"
+                title={
                   themeMode === 'light'
-                    ? 'bg-[#141519] text-white shadow-2xs'
-                    : 'text-[#6E7480]'
-                }`}
+                    ? 'Cambiar a Modo Oscuro'
+                    : 'Cambiar a Modo Claro'
+                }
+                className="h-10 px-1.5 rounded-full bg-[#FFFFFF] flex items-center gap-1 shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)] cursor-pointer border border-transparent hover:border-[#EEF1F5] shrink-0"
               >
-                <Sun className="w-3.5 h-3.5" />
-              </span>
-              <span
-                className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-                  themeMode === 'dark'
-                    ? 'bg-[#A8E6E3] text-[#141519] keep-dark-text shadow-2xs'
-                    : 'text-[#6E7480]'
-                }`}
-              >
-                <Moon className="w-3.5 h-3.5" />
-              </span>
-            </button>
+                <span
+                  className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                    themeMode === 'light'
+                      ? 'bg-[#141519] text-white shadow-2xs'
+                      : 'text-[#6E7480]'
+                  }`}
+                >
+                  <Sun className="w-3.5 h-3.5" />
+                </span>
+                <span
+                  className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+                    themeMode === 'dark'
+                      ? 'bg-[#A8E6E3] text-[#141519] keep-dark-text shadow-2xs'
+                      : 'text-[#6E7480]'
+                  }`}
+                >
+                  <Moon className="w-3.5 h-3.5" />
+                </span>
+              </button>
 
-            {/* 3. Circular user avatar with white border -> opens interactive UserProfileModal */}
-            <button
-              type="button"
-              onClick={() => setIsProfileOpen(true)}
-              aria-label="Abrir configuración de perfil"
-              title={`Perfil de ${userProfile.name} · Lv. ${totalGlobalLevels} ${userProfile.roleTitle}`}
-              className={`w-10 h-10 rounded-full border-2 border-white font-bold text-[0.82rem] flex items-center justify-center shadow-[0_2px_10px_-2px_rgba(20,21,25,0.08)] overflow-hidden cursor-pointer transition-transform hover:scale-105 ${getAvatarBgClass()}`}
-            >
-              <span>{userProfile.initials}</span>
-            </button>
+              {/* 3. Circular user avatar with white border -> opens interactive UserProfileModal */}
+              <button
+                type="button"
+                onClick={() => setIsProfileOpen(true)}
+                aria-label="Abrir configuración de perfil"
+                title={`Perfil de ${userProfile.name} · Lv. ${totalGlobalLevels} ${userProfile.roleTitle}`}
+                className={`w-10 h-10 rounded-full border-2 border-white font-bold text-[0.82rem] flex items-center justify-center shadow-[0_2px_10px_-2px_rgba(20,21,25,0.08)] overflow-hidden cursor-pointer transition-transform hover:scale-105 shrink-0 ${getAvatarBgClass()}`}
+              >
+                <span>{userProfile.initials}</span>
+              </button>
+            </div>
           </div>
+
+          {/* Mobile Touch-Friendly Top Pill Navigation Strip */}
+          <nav
+            aria-label="Pestañas principales en móvil"
+            className="md:hidden flex items-center gap-2 overflow-x-auto no-scrollbar pt-3 pb-1 -mx-1 px-1"
+          >
+            {navItems.map((item) => {
+              const isActive = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setActiveTab(item.id)}
+                  className={`h-10 rounded-full px-4 text-[0.8rem] font-semibold flex items-center gap-2 transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                    isActive
+                      ? 'bg-[#141519] text-white shadow-xs ring-1 ring-white/15'
+                      : 'bg-[#FFFFFF] text-[#6E7480] hover:text-[#141519] shadow-[0_2px_10px_-2px_rgba(20,21,25,0.05)]'
+                  }`}
+                >
+                  {item.icon}
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
         </header>
 
         {/* ====================================================================
             HERO ROW: INVERTED GREETING + LEVEL BADGE (LEFT) | SEARCH + AI (RIGHT)
         ==================================================================== */}
-        <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6 px-1">
-          <div>
-            <p className="text-[0.875rem] font-medium text-[#6E7480] mb-1">
+        <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-3.5 sm:gap-4 mb-5 sm:mb-6 px-0.5 sm:px-1">
+          <div className="min-w-0">
+            <p className="text-[0.82rem] sm:text-[0.875rem] font-medium text-[#6E7480] mb-1 truncate">
               Hola, {userProfile.name} 👋 —{' '}
               {new Date().toLocaleDateString('es-ES', {
                 weekday: 'long',
@@ -1917,15 +1932,15 @@ export default function App() {
                 month: 'long',
               })}
             </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-3xl font-bold tracking-[-0.02em] text-[#141519]">
+            <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.02em] text-[#141519]">
                 Bienvenido a Aether
               </h1>
               <button
                 type="button"
                 onClick={() => setIsProfileOpen(true)}
                 title="Editar perfil y rango RPG"
-                className="px-3.5 py-1.5 rounded-full bg-[#CAE9F5] text-[#141519] keep-dark-text text-[0.76rem] font-bold flex items-center gap-1.5 whitespace-nowrap shadow-2xs hover:brightness-95 transition-all cursor-pointer"
+                className="h-9 px-3.5 rounded-full bg-[#CAE9F5] text-[#141519] keep-dark-text text-[0.75rem] font-bold flex items-center gap-1.5 whitespace-nowrap shadow-2xs hover:brightness-95 transition-all cursor-pointer"
               >
                 <Crown className="w-3.5 h-3.5 text-[#141519] fill-[#141519]" />
                 <span>
@@ -1935,10 +1950,10 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
-            {/* White Pill Search Bar (w-72) */}
-            <div className="relative flex-1 sm:flex-initial">
-              <Search className="w-4 h-4 text-[#8E95A2] absolute left-4 top-1/2 -translate-y-1/2" />
+          <div className="flex items-center gap-2 w-full lg:w-auto">
+            {/* White Pill Search Bar */}
+            <div className="relative flex-1 sm:flex-initial min-w-0">
+              <Search className="w-4 h-4 text-[#8E95A2] absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
               <input
                 type="text"
                 value={globalSearch}
@@ -1961,7 +1976,7 @@ export default function App() {
               className="h-11 px-4 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.82rem] font-semibold flex items-center gap-2 transition-colors cursor-pointer shrink-0 shadow-xs ring-1 ring-white/10"
             >
               <Sparkles className="w-4 h-4 text-[#A8E6E3]" />
-              <span className="hidden sm:inline">Asistente IA</span>
+              <span>Asistente IA</span>
             </button>
           </div>
         </section>
@@ -2433,59 +2448,143 @@ export default function App() {
             </div>
 
             {/* ----------------------------------------------------------------
-                2. ACTIVIDAD / HORAS DE DEDICACIÓN (PILL BAR CHART - 5 COLS)
+                2. HYPE RADAR · PRÓXIMOS ESTRENOS (5 COLS)
             ---------------------------------------------------------------- */}
             <div className="lg:col-span-5 bg-white rounded-[24px] p-5 sm:p-6 border border-[#EEF1F5] shadow-bento flex flex-col justify-between">
               <div>
                 <BentoHeader
-                  icon={<BarChart3 className="w-4 h-4" />}
-                  title="Horas de Dedicación"
-                  countBadge={`${totalWeeklyHours}h sem`}
+                  icon={<Compass className="w-4 h-4" />}
+                  title="Hype Radar"
+                  countBadge={`${nearestHypeRadarItems.length} Próximos`}
                   rightSlot={
-                    skills.length > 0 ? (
+                    <>
                       <button
                         type="button"
-                        onClick={() => handleAddSkillHours(skills[0].id, 0.5)}
-                        className="h-8 px-3 rounded-full bg-[#F7F9FB] hover:bg-[#A8E6E3]/50 border border-[#EEF1F5] text-[0.74rem] font-semibold text-[#141519] cursor-pointer whitespace-nowrap tabular-nums"
+                        onClick={() => {
+                          setEditingVaultItem(null);
+                          setDefaultVaultGroup('proximamente');
+                          setCreateModalMode('vault');
+                        }}
+                        title="Añadir estreno al Hype Radar"
+                        className="w-8 h-8 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[#141519] flex items-center justify-center cursor-pointer"
                       >
-                        +0.5h Hoy
+                        <Plus className="w-4 h-4" />
                       </button>
-                    ) : undefined
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('vault')}
+                        className="h-8 px-3 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[0.75rem] font-semibold text-[#141519] flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                      >
+                        <span>Ver todos</span>
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </button>
+                    </>
                   }
                 />
 
-                <PillBarChart
-                  data={activity}
-                  selectedDate={selectedActivityDate}
-                  onSelectDate={setSelectedActivityDate}
-                  goalHours={userProfile.dailyGoalHours}
-                />
+                {nearestHypeRadarItems.length === 0 ? (
+                  <SoftBentoEmptyState
+                    icon={<Film className="w-5 h-5" />}
+                    title="Tu Hype Radar está listo"
+                    description="Registra próximos estrenos de cine, series o temporadas para seguir su cuenta regresiva."
+                    actionLabel="+ Añadir próximo estreno"
+                    onAction={() => {
+                      setEditingVaultItem(null);
+                      setDefaultVaultGroup('proximamente');
+                      setCreateModalMode('vault');
+                    }}
+                    onAskAssistant={() => setIsAssistantOpen(true)}
+                    compact
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {nearestHypeRadarItems.map(({ item, countdown }, idx) => {
+                      const hypePct = Math.min(
+                        100,
+                        Math.max(0, Number(item.hypeLevel ?? 95))
+                      );
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => setActiveTab('vault')}
+                          className="p-3.5 rounded-[20px] bg-lavender-gradient border-2 border-white/75 text-[#141519] keep-dark-text cursor-pointer transition-transform hover:scale-[1.01] shadow-2xs"
+                        >
+                          <div className="flex items-center justify-between gap-3 mb-2.5">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="w-11 h-12 rounded-[14px] overflow-hidden shrink-0 border border-white/80 bg-white">
+                                <VisualArtwork
+                                  variant={item.artVariant}
+                                  accent={item.accent}
+                                  imageUrl={item.imageUrl}
+                                  alt={item.title}
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <span className="text-[0.68rem] font-bold uppercase tracking-wider text-[#141519]/75 block">
+                                  Estreno · {countdown.formattedDate}
+                                </span>
+                                <h3 className="text-[0.95rem] font-bold text-[#141519] truncate">
+                                  {item.title}
+                                </h3>
+                              </div>
+                            </div>
+
+                            <span
+                              className={`px-3 py-1 rounded-full text-[0.72rem] font-bold tabular-nums shrink-0 ${
+                                idx === 0
+                                  ? 'bg-[#141519] text-white'
+                                  : 'bg-white/80 text-[#141519]'
+                              }`}
+                            >
+                              {countdown.isFuture
+                                ? `Faltan ${countdown.daysRemaining}d`
+                                : 'Estrenado'}
+                            </span>
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between text-[0.68rem] font-bold text-[#141519]/80 mb-1 tabular-nums">
+                              <span>Nivel de Hype</span>
+                              <span>{hypePct}%</span>
+                            </div>
+                            <div className="w-full h-2 rounded-full bg-white/40 overflow-hidden p-0.5">
+                              <div
+                                className="h-full rounded-full bg-[#FFFFFF] transition-all duration-500"
+                                style={{ width: `${hypePct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              {/* Selected Day Summary Strip */}
-              <div className="mt-4 p-3.5 rounded-[16px] bg-[#F7F9FB] border border-[#EEF1F5] flex items-center justify-between gap-2">
-                <div>
-                  <span className="block text-[0.7rem] font-semibold text-[#8E95A2]">
-                    {selectedActivityObj?.dayLabel}
-                  </span>
-                  <span className="text-[0.84rem] font-bold text-[#141519]">
-                    {selectedActivityObj?.focusTopic}
-                  </span>
-                </div>
-                <span className="px-3 py-1 rounded-full bg-[#141519] text-white text-[0.78rem] font-bold tabular-nums">
-                  {(selectedActivityObj?.hours || 0).toFixed(1)} hrs
-                </span>
+              <div className="mt-4 pt-3.5 border-t border-[#EEF1F5] flex items-center justify-between text-[0.72rem] font-semibold text-[#6E7480]">
+                <span>Radar de estrenos</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingVaultItem(null);
+                    setDefaultVaultGroup('proximamente');
+                    setCreateModalMode('vault');
+                  }}
+                  className="text-[#141519] font-bold hover:underline cursor-pointer"
+                >
+                  + Programar estreno
+                </button>
               </div>
             </div>
 
             {/* ================================================================
                 SECOND ROW: 3 ASYMMETRIC COLUMNS (25% / 30% / 45% IN DESKTOP)
             ================================================================ */}
-            <div className="lg:col-span-12 grid grid-cols-1 lg:grid-cols-[25fr_30fr_45fr] gap-5 items-stretch">
+            <div className="lg:col-span-12 grid grid-cols-1 lg:grid-cols-[25fr_30fr_45fr] gap-4 sm:gap-5 items-stretch">
               {/* --------------------------------------------------------------
                   COLUMNA 1 (25%) — BÓVEDA RECIENTE (ESTILO LISTA LIMPIA)
               -------------------------------------------------------------- */}
-              <div className="bg-[#FFFFFF] rounded-[24px] p-6 border border-[#EEF1F5] shadow-bento flex flex-col justify-between">
+              <div className="bg-[#FFFFFF] rounded-[24px] p-5 sm:p-6 border border-[#EEF1F5] shadow-bento flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between gap-2 mb-4">
                     <div className="flex items-center gap-2.5 min-w-0">

@@ -607,10 +607,10 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#141519]/40 backdrop-blur-sm animate-fadeIn">
-      <div className="bg-[#FFFFFF] rounded-[28px] w-full max-w-lg border border-[#EEF1F5] shadow-[0_24px_60px_-12px_rgba(20,21,25,0.22)] overflow-hidden flex flex-col max-h-[86vh]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-[#141519]/40 backdrop-blur-sm animate-fadeIn">
+      <div className="bg-[#FFFFFF] rounded-t-[28px] sm:rounded-[28px] w-full max-w-full sm:max-w-lg border border-[#EEF1F5] shadow-[0_24px_60px_-12px_rgba(20,21,25,0.22)] overflow-hidden flex flex-col h-[88dvh] sm:h-auto max-h-[92dvh] sm:max-h-[86vh]">
         {/* Cabecera limpia con acceso a Historial de Conversaciones y Nueva Sesión */}
-        <div className="px-6 pt-5 pb-3 flex items-center justify-between gap-2">
+        <div className="px-4 sm:px-6 pt-4 sm:pt-5 pb-3 flex items-center justify-between gap-2 shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-[0.95rem] font-bold text-[#141519] tracking-tight truncate">
               Aether Assistant
@@ -620,7 +620,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
               type="button"
               onClick={() => setIsHistoryOpen((prev) => !prev)}
               title="Historial de conversaciones guardadas"
-              className={`h-7 px-2.5 rounded-full text-[0.72rem] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
+              className={`h-8 px-3 rounded-full text-[0.72rem] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
                 isHistoryOpen
                   ? 'bg-[#141519] text-[#FFFFFF]'
                   : 'bg-[#F7F9FB] hover:bg-[#EBF0F5] text-[#6E7480] hover:text-[#141519] border border-[#EEF1F5]'
@@ -647,7 +647,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
               type="button"
               onClick={handleStartNewSession}
               title="Iniciar nueva conversación limpia"
-              className="h-8 px-3 rounded-full bg-[#F7F9FB] hover:bg-[#A8E6E3]/45 border border-[#EEF1F5] text-[0.72rem] font-bold text-[#141519] flex items-center gap-1 transition-colors cursor-pointer"
+              className="h-9 px-3 rounded-full bg-[#F7F9FB] hover:bg-[#A8E6E3]/45 border border-[#EEF1F5] text-[0.72rem] font-bold text-[#141519] flex items-center gap-1 transition-colors cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>Nueva</span>
@@ -656,7 +656,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
             <button
               onClick={onClose}
               aria-label="Cerrar asistente"
-              className="w-8 h-8 rounded-full bg-[#F7F9FB] hover:bg-[#141519] hover:text-[#FFFFFF] flex items-center justify-center text-[#6E7480] transition-colors cursor-pointer"
+              className="w-9 h-9 rounded-full bg-[#F7F9FB] hover:bg-[#141519] hover:text-[#FFFFFF] flex items-center justify-center text-[#6E7480] transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -665,7 +665,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
 
         {/* Panel Desplegable de Historial de Conversaciones (Firestore) */}
         {isHistoryOpen && (
-          <div className="mx-6 mb-2 p-3.5 rounded-[20px] bg-[#F7F9FB] border border-[#EEF1F5] max-h-60 overflow-y-auto space-y-2 animate-fadeIn">
+          <div className="mx-4 sm:mx-6 mb-2 p-3.5 rounded-[20px] bg-[#F7F9FB] border border-[#EEF1F5] max-h-56 overflow-y-auto space-y-2 animate-fadeIn shrink-0">
             <div className="flex items-center justify-between px-1 mb-1">
               <span className="text-[0.72rem] font-bold text-[#6E7480] uppercase tracking-wider">
                 Conversaciones recientes
@@ -733,7 +733,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                       }}
                       title="Eliminar conversación"
                       aria-label="Eliminar conversación"
-                      className="w-7 h-7 rounded-full hover:bg-[#F28B82]/25 text-[#8E95A2] hover:text-[#141519] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                      className="w-8 h-8 rounded-full hover:bg-[#F28B82]/25 text-[#8E95A2] hover:text-[#141519] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -745,7 +745,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
         )}
 
         {/* Historial de Chat */}
-        <div className="flex-1 overflow-y-auto px-6 py-3 space-y-4">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-3 space-y-4 min-h-0">
           {messages.length === 1 && (
             <div className="flex flex-wrap gap-2 pb-1">
               {QUICK_PROMPTS.map((q) => (
@@ -769,13 +769,15 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
               }`}
             >
               <div
-                className={`max-w-[90%] rounded-[22px] px-4 py-3 text-[0.875rem] leading-relaxed ${
+                className={`max-w-[92%] sm:max-w-[90%] rounded-[22px] px-4 py-3 text-[0.875rem] leading-relaxed ${
                   msg.role === 'user'
                     ? 'bg-[#141519] text-[#FFFFFF] rounded-br-[6px]'
                     : 'bg-[#F7F9FB] text-[#141519] border border-[#EEF1F5] rounded-bl-[6px]'
                 }`}
               >
-                <p className="font-medium whitespace-pre-line">{msg.content}</p>
+                <p className="font-medium whitespace-pre-line break-words">
+                  {msg.content}
+                </p>
 
                 {/* Tarjetas Soft Bento en Miniatura */}
                 {msg.actionsTaken && msg.actionsTaken.length > 0 && (
@@ -797,16 +799,16 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                             border: '2px solid rgba(255, 255, 255, 0.75)',
                           }}
                         >
-                          <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-start justify-between gap-2.5">
                             <div className="flex items-center gap-3 min-w-0">
                               {action.imageUrl ? (
                                 <img
                                   src={action.imageUrl}
                                   alt={action.title || action.summary}
-                                  className="w-12 h-12 rounded-[14px] object-cover border border-white/80 shadow-xs shrink-0 bg-white"
+                                  className="w-11 h-11 sm:w-12 sm:h-12 rounded-[14px] object-cover border border-white/80 shadow-xs shrink-0 bg-white"
                                 />
                               ) : (
-                                <div className="w-11 h-11 rounded-[14px] bg-[#FFFFFF] flex items-center justify-center shadow-xs shrink-0 border border-white/80">
+                                <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-[14px] bg-[#FFFFFF] flex items-center justify-center shadow-xs shrink-0 border border-white/80">
                                   {getActionIcon(action.name, action.spotifyUrl)}
                                 </div>
                               )}
@@ -821,7 +823,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                                     </>
                                   )}
                                 </div>
-                                <h4 className="text-[0.92rem] font-bold text-[#141519] truncate mt-0.5">
+                                <h4 className="text-[0.9rem] sm:text-[0.92rem] font-bold text-[#141519] truncate mt-0.5">
                                   {action.title || action.summary}
                                 </h4>
                                 {action.subtitle && (
@@ -864,7 +866,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                           )}
 
                           {(action.audioPreviewUrl || action.spotifyUrl) && (
-                            <div className="mt-2.5 pt-2 border-t border-white/40 flex items-center justify-between gap-2">
+                            <div className="mt-2.5 pt-2 border-t border-white/40 flex items-center justify-between gap-2 flex-wrap">
                               {action.audioPreviewUrl ? (
                                 <button
                                   type="button"
@@ -943,8 +945,8 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
           <div ref={chatEndRef} />
         </div>
 
-        {/* Píldora Flotante Inferior Unificada (Estilo Gemini Voice Equalizer) */}
-        <div className="px-5 pb-5 pt-2">
+        {/* Píldora Flotante Inferior Unificada (Adaptada 100% al ancho móvil sin recortes) */}
+        <div className="w-full px-3 sm:px-5 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-5 pt-2 shrink-0">
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -954,7 +956,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                 handleSend();
               }
             }}
-            className={`flex items-center gap-2.5 p-2 rounded-full border transition-all duration-300 shadow-[0_8px_28px_-6px_rgba(20,21,25,0.08)] ${
+            className={`w-full min-w-0 flex items-center gap-2 p-1.5 sm:p-2 rounded-full border transition-all duration-300 shadow-[0_8px_28px_-6px_rgba(20,21,25,0.08)] ${
               showEqualizerInCenter
                 ? 'bg-[#FFFFFF] border-[#BBC6F8]'
                 : 'bg-[#F7F9FB] border-[#EEF1F5] focus-within:bg-[#FFFFFF] focus-within:border-[#BBC6F8]'
@@ -988,11 +990,9 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
               <div
                 onClick={() => pulseSpeechActivity(900)}
                 title="Habla ahora para animar el ecualizador"
-                className="flex-1 flex items-center justify-between gap-[3px] h-10 px-2 select-none cursor-pointer"
+                className="flex-1 min-w-0 overflow-hidden flex items-center justify-between gap-[1.5px] sm:gap-[3px] h-10 px-1.5 sm:px-2 select-none cursor-pointer"
               >
                 {EQUALIZER_BARS.map((bar) => {
-                  // Si hay niveles reales del micrófono (Web Audio API), úsalos;
-                  // si no hay audio activo, la línea queda plana (3px) y estática.
                   const liveBarHeight = liveLevels?.[bar.idx];
                   const heightPx = isAudioWaveDancing
                     ? liveBarHeight ?? bar.activeHeight
@@ -1004,7 +1004,9 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                   return (
                     <span
                       key={bar.idx}
-                      className={`w-[2.5px] rounded-full transition-all duration-150 ${
+                      className={`flex-1 max-w-[3px] min-w-[1.5px] rounded-full transition-all duration-150 ${
+                        bar.idx % 3 === 2 ? 'hidden xs:inline-block sm:inline-block' : ''
+                      } ${
                         shouldUseCssWave
                           ? 'aether-vbar aether-vbar-speaking'
                           : ''
@@ -1029,7 +1031,7 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Habla o escribe a Aether..."
-                className="flex-1 bg-transparent px-1 py-2 text-[0.9rem] font-medium text-[#141519] placeholder-[#A0A6B2] focus:outline-none"
+                className="flex-1 min-w-0 w-full bg-transparent px-1 py-2 text-[0.88rem] sm:text-[0.9rem] font-medium text-[#141519] placeholder-[#A0A6B2] focus:outline-none"
               />
             )}
 
