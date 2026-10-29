@@ -6,6 +6,7 @@ import {
   BookMarked,
   Calendar as CalendarIcon,
   CheckCircle2,
+  CheckSquare,
   ChevronDown,
   Clock,
   Cloud,
@@ -39,6 +40,7 @@ import {
 } from './data/initialData';
 import {
   AssistantActionRecord,
+  AssistantConversation,
   CalendarDay,
   DailyActivity,
   GoogleTaskItem,
@@ -79,6 +81,7 @@ import {
   createSkillRpgDoc,
   createVaultItemDoc,
   createWishlistItemDoc,
+  deleteAssistantConversationDoc,
   deleteSkillRpgDoc,
   deleteVaultItemDoc,
   deleteWishlistItemDoc,
@@ -86,7 +89,9 @@ import {
   googleSignInWithWorkspace,
   initAuth,
   logoutFirebase,
+  saveAssistantConversationDoc,
   saveWishlistSettingsDoc,
+  subscribeAssistantConversations,
   subscribeDailyHours,
   subscribeSkillsRpg,
   subscribeVaultItems,
@@ -134,6 +139,7 @@ const LS_KEYS = {
   schedule: 'lifeos_prod_schedule_v1',
   tasks: 'lifeos_prod_tasks_v1',
   activity: 'lifeos_prod_activity_v1',
+  conversations: 'lifeos_prod_conversations_v1',
 };
 
 function readLocalBackup<T>(key: string, fallback: T): T {
@@ -163,6 +169,7 @@ export default function App() {
   );
   const [globalSearch, setGlobalSearch] = useState('');
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const [isDailyBriefExpanded, setIsDailyBriefExpanded] = useState(false);
 
   // Hash-based routing synchronization for static hosting (GitHub Pages)
   useEffect(() => {
@@ -264,6 +271,9 @@ export default function App() {
   const [googleTasks, setGoogleTasks] = useState<GoogleTaskItem[]>(() =>
     readLocalBackup(LS_KEYS.tasks, [])
   );
+  const [assistantConversations, setAssistantConversations] = useState<
+    AssistantConversation[]
+  >(() => readLocalBackup(LS_KEYS.conversations, []));
 
   const showNotification = useCallback((msg: string) => {
     setToastBanner(msg);
@@ -324,6 +334,10 @@ export default function App() {
       localStorage.setItem(LS_KEYS.schedule, JSON.stringify(schedule));
       localStorage.setItem(LS_KEYS.tasks, JSON.stringify(googleTasks));
       localStorage.setItem(LS_KEYS.activity, JSON.stringify(activity));
+      localStorage.setItem(
+        LS_KEYS.conversations,
+        JSON.stringify(assistantConversations)
+      );
     } catch {
       // ignore storage quota errors
     }
@@ -336,6 +350,7 @@ export default function App() {
     schedule,
     googleTasks,
     activity,
+    assistantConversations,
   ]);
 
   // Update Calendar Matrix highlights whenever schedule blocks or tasks change
@@ -423,12 +438,20 @@ export default function App() {
       setActivity(baseWeek);
     });
 
+    const unsubConversations = subscribeAssistantConversations(
+      authUser.uid,
+      (convs) => {
+        setAssistantConversations(convs);
+      }
+    );
+
     return () => {
       unsubVault();
       unsubSkills();
       unsubWishlist();
       unsubSettings();
       unsubHours();
+      unsubConversations();
     };
   }, [authReady, authUser]);
 
@@ -858,6 +881,35 @@ export default function App() {
     const created: ScheduleBlock = { ...newBlock, id: `sch-${Date.now()}` };
     setSchedule((prev) => [...prev, created]);
     showNotification(`Bloque "${created.title}" agendado en tu Cronograma`);
+  };
+
+  // Assistant Conversation History Handlers (Firestore + local backup)
+  const handleSaveAssistantConversation = async (
+    conv: AssistantConversation
+  ) => {
+    setAssistantConversations((prev) => {
+      const filtered = prev.filter((c) => c.id !== conv.id);
+      return [conv, ...filtered].slice(0, 20);
+    });
+    if (authUser) {
+      try {
+        await saveAssistantConversationDoc(authUser.uid, conv);
+      } catch {
+        // fallback already updated in state
+      }
+    }
+  };
+
+  const handleDeleteAssistantConversation = async (convId: string) => {
+    setAssistantConversations((prev) => prev.filter((c) => c.id !== convId));
+    if (authUser) {
+      try {
+        await deleteAssistantConversationDoc(convId);
+      } catch {
+        // ignore transient error
+      }
+    }
+    showNotification('Conversación eliminada del historial');
   };
 
   // Google Tasks Handlers
@@ -1629,6 +1681,25 @@ export default function App() {
       ? dayScheduleBlocks.slice(0, 4)
       : schedule.slice(0, 4);
 
+  const currentHour = new Date().getHours();
+  const timeOfDayGreeting =
+    currentHour < 12
+      ? 'Buenos días'
+      : currentHour < 19
+      ? 'Buenas tardes'
+      : 'Buenas noches';
+
+  const pendingDailyTasks = googleTasks.filter((t) => t.status !== 'completed');
+
+  const nearestHypeRadarItems = vault
+    .filter((item) => item.vaultGroup === 'proximamente')
+    .map((item) => ({
+      item,
+      countdown: getAccurateHypeCountdown(item.releaseDate, item.daysRemaining),
+    }))
+    .sort((a, b) => a.countdown.daysRemaining - b.countdown.daysRemaining)
+    .slice(0, 2);
+
   return (
     <div
       className={`min-h-screen p-2 sm:p-5 pb-24 md:pb-8 transition-colors duration-200 ${
@@ -1918,6 +1989,356 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             {/* ----------------------------------------------------------------
+                0. WIDGET DE RESUMEN DIARIO (VIVID GRADIENT + SPRING EXPANDABLE DAILY BRIEF)
+            ---------------------------------------------------------------- */}
+            <div
+              className={`lg:col-span-12 rounded-[26px] bg-[#FFFFFF] border border-[#EEF1F5] shadow-bento overflow-hidden transition-all duration-500 ${
+                isDailyBriefExpanded ? 'p-1.5' : 'p-0'
+              }`}
+            >
+              {/* Cabecera / Contenedor Contraído con Degradado Dinámico Vivo y Shimmer en bucle */}
+              <div
+                role="button"
+                tabIndex={0}
+                aria-expanded={isDailyBriefExpanded}
+                onClick={() => setIsDailyBriefExpanded((prev) => !prev)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setIsDailyBriefExpanded((prev) => !prev);
+                  }
+                }}
+                className={`daily-brief-vivid-header keep-dark-text cursor-pointer select-none group px-5 py-4 transition-all duration-500 ${
+                  isDailyBriefExpanded ? 'rounded-[22px]' : 'rounded-[26px]'
+                }`}
+              >
+                {/* Haz de brillo sutil en bucle (Shimmer Sweep) */}
+                <div className="daily-brief-shimmer-beam" aria-hidden="true" />
+
+                {/* Acento de luz radial carbón/lavanda sutil en la esquina derecha */}
+                <div
+                  className="pointer-events-none absolute -right-10 -top-10 w-44 h-44 rounded-full opacity-35 blur-2xl"
+                  style={{
+                    background:
+                      'radial-gradient(circle, rgba(20,21,25,0.22) 0%, rgba(155,169,240,0.25) 55%, transparent 75%)',
+                  }}
+                  aria-hidden="true"
+                />
+
+                <div className="relative z-10 flex items-center justify-between gap-3.5">
+                  <div className="flex items-center gap-3.5 min-w-0">
+                    {/* Icono principal en contenedor carbón con destello menta */}
+                    <div className="w-11 h-11 rounded-[16px] bg-[#141519] text-[#A8E6E3] border border-white/40 flex items-center justify-center shrink-0 shadow-sm transition-transform duration-300 group-hover:scale-105">
+                      <Sparkles className="w-5 h-5" />
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#141519] text-[#FFFFFF] text-[0.65rem] font-bold uppercase tracking-wider inline-flex items-center gap-1">
+                          <Sun className="w-3 h-3 text-[#A8E6E3]" />
+                          Daily Brief
+                        </span>
+
+                        <h2 className="text-[1.05rem] sm:text-[1.12rem] font-bold tracking-[-0.02em] text-[#141519] keep-dark-text truncate">
+                          {timeOfDayGreeting}, {userProfile.name}
+                        </h2>
+
+                        <span className="px-2.5 py-0.5 rounded-full bg-white/65 backdrop-blur-md border border-white/80 text-[#141519] keep-dark-text text-[0.68rem] font-semibold tabular-nums">
+                          {new Date().toLocaleDateString('es-ES', {
+                            weekday: 'short',
+                            day: 'numeric',
+                            month: 'short',
+                          })}{' '}
+                          ·{' '}
+                          {new Date().toLocaleTimeString('es-ES', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+
+                      <p className="text-[0.78rem] font-semibold text-[#141519]/80 keep-dark-text truncate mt-1 tabular-nums">
+                        {pendingDailyTasks.length}{' '}
+                        {pendingDailyTasks.length === 1 ? 'tarea' : 'tareas'} ·{' '}
+                        {dashboardScheduleBlocks.length}{' '}
+                        {dashboardScheduleBlocks.length === 1
+                          ? 'evento'
+                          : 'eventos'}{' '}
+                        · {nearestHypeRadarItems.length} en Hype Radar
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Píldoras de estado rápido + Botón Chevron con transición Spring */}
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="hidden md:flex items-center gap-1.5">
+                      <span className="px-3 py-1 rounded-full bg-white/75 backdrop-blur-md border border-white/90 text-[0.7rem] font-bold text-[#141519] keep-dark-text inline-flex items-center gap-1.5 tabular-nums shadow-2xs">
+                        <span className="w-2 h-2 rounded-full bg-[#141519]" />
+                        {pendingDailyTasks.length} pendientes
+                      </span>
+                      {nearestHypeRadarItems.length > 0 && (
+                        <span className="px-3 py-1 rounded-full bg-[#141519]/90 text-white text-[0.7rem] font-bold inline-flex items-center gap-1.5 tabular-nums shadow-2xs">
+                          <span className="w-2 h-2 rounded-full bg-[#A8E6E3]" />
+                          {nearestHypeRadarItems[0].countdown.daysRemaining}d estreno
+                        </span>
+                      )}
+                    </div>
+
+                    <span
+                      className={`daily-brief-chevron-spring w-9 h-9 rounded-full flex items-center justify-center border ${
+                        isDailyBriefExpanded
+                          ? 'bg-[#141519] text-[#FFFFFF] border-[#141519] rotate-180 shadow-sm'
+                          : 'bg-white/80 text-[#141519] keep-dark-text border-white group-hover:bg-[#141519] group-hover:text-[#FFFFFF] group-hover:border-[#141519]'
+                      }`}
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Panel Desplegable con transición tipo Muelle (Spring ease-in-out) */}
+              <div
+                className={`grid daily-brief-spring-collapse ${
+                  isDailyBriefExpanded
+                    ? 'grid-rows-[1fr] opacity-100'
+                    : 'grid-rows-[0fr] opacity-0 pointer-events-none'
+                }`}
+              >
+                <div className="overflow-hidden">
+                  <div className="px-4 pt-4 pb-3.5">
+                    <div className="flex items-center justify-between gap-2 mb-3.5 flex-wrap">
+                      <span className="text-[0.72rem] font-bold text-[#6E7480] uppercase tracking-wider flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-[#6CD4CE]" />
+                        Panorama interactivo del día
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('calendar')}
+                          className="h-7 px-3 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[0.72rem] font-semibold text-[#141519] flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <CalendarIcon className="w-3 h-3" />
+                          <span>Ver Agenda</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setIsAssistantOpen(true)}
+                          className="h-7 px-3 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.72rem] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Sparkles className="w-3 h-3 text-[#A8E6E3]" />
+                          <span>Planificar con IA</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* 1. Tareas Pendientes del Día */}
+                      <div className="rounded-[20px] p-4 bg-[#F7F9FB] border border-[#EEF1F5] flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-3">
+                            <span className="text-[0.8rem] font-bold text-[#141519] flex items-center gap-1.5">
+                              <CheckSquare className="w-3.5 h-3.5 text-[#141519]" />
+                              Tareas Pendientes
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-[#A8E6E3] text-[#141519] keep-dark-text text-[0.68rem] font-bold tabular-nums">
+                              {pendingDailyTasks.length}
+                            </span>
+                          </div>
+
+                          {pendingDailyTasks.length === 0 ? (
+                            <div className="py-3 text-center">
+                              <p className="text-[0.76rem] font-medium text-[#8E95A2] mb-2">
+                                No tienes tareas pendientes para hoy.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab('calendar')}
+                                className="px-3 py-1 rounded-full bg-[#FFFFFF] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[0.7rem] font-bold text-[#141519] cursor-pointer"
+                              >
+                                + Añadir tarea
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {pendingDailyTasks.slice(0, 3).map((task) => (
+                                <button
+                                  key={task.id}
+                                  type="button"
+                                  onClick={() => handleToggleGoogleTask(task)}
+                                  className="w-full p-2.5 rounded-[14px] bg-[#FFFFFF] hover:bg-[#A8E6E3]/25 border border-[#EEF1F5] flex items-center gap-2.5 text-left transition-colors cursor-pointer"
+                                >
+                                  <span className="w-4 h-4 rounded-full border-2 border-[#141519] flex items-center justify-center shrink-0" />
+                                  <span className="text-[0.78rem] font-semibold text-[#141519] truncate">
+                                    {task.title}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('calendar')}
+                          className="mt-3 text-[0.72rem] font-bold text-[#6E7480] hover:text-[#141519] inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>Gestionar tareas</span>
+                          <ArrowUpRight className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      {/* 2. Eventos Próximos del Cronograma */}
+                      <div className="rounded-[20px] p-4 bg-[#F7F9FB] border border-[#EEF1F5] flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-3">
+                            <span className="text-[0.8rem] font-bold text-[#141519] flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5 text-[#141519]" />
+                              Próximos Eventos
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-[#FFFFFF] border border-[#EEF1F5] text-[0.68rem] font-bold text-[#141519] tabular-nums">
+                              {dashboardScheduleBlocks.length}
+                            </span>
+                          </div>
+
+                          {dashboardScheduleBlocks.length === 0 ? (
+                            <div className="py-3 text-center">
+                              <p className="text-[0.76rem] font-medium text-[#8E95A2] mb-2">
+                                Tu cronograma de hoy está despejado.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => setCreateModalMode('schedule')}
+                                className="px-3 py-1 rounded-full bg-[#FFFFFF] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[0.7rem] font-bold text-[#141519] cursor-pointer"
+                              >
+                                + Agendar bloque
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {dashboardScheduleBlocks.slice(0, 2).map((block) => (
+                                <div
+                                  key={block.id}
+                                  onClick={() => setActiveTab('calendar')}
+                                  className="p-2.5 rounded-[14px] bg-[#FFFFFF] border border-[#EEF1F5] flex items-center justify-between gap-2 cursor-pointer hover:border-[#141519]/30 transition-colors"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-[0.78rem] font-bold text-[#141519] truncate">
+                                      {block.title}
+                                    </p>
+                                    <p className="text-[0.68rem] font-medium text-[#6E7480] tabular-nums">
+                                      {block.time}
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={`px-2.5 py-0.5 rounded-full text-[0.66rem] font-bold shrink-0 ${
+                                      block.accent === 'lavender'
+                                        ? 'bg-[#BBC6F8] text-[#141519] keep-dark-text'
+                                        : 'bg-[#A8E6E3] text-[#141519] keep-dark-text'
+                                    }`}
+                                  >
+                                    {block.completion === 100 ? 'Listo' : 'Hoy'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setCreateModalMode('schedule')}
+                          className="mt-3 text-[0.72rem] font-bold text-[#6E7480] hover:text-[#141519] inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>+ Nuevo evento</span>
+                          <ArrowUpRight className="w-3 h-3" />
+                        </button>
+                      </div>
+
+                      {/* 3. Recordatorio Rápido del Hype Radar */}
+                      <div className="rounded-[20px] p-4 bg-[#F7F9FB] border border-[#EEF1F5] flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-3">
+                            <span className="text-[0.8rem] font-bold text-[#141519] flex items-center gap-1.5">
+                              <Film className="w-3.5 h-3.5 text-[#141519]" />
+                              Hype Radar Cercano
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full bg-[#BBC6F8] text-[#141519] keep-dark-text text-[0.68rem] font-bold tabular-nums">
+                              {nearestHypeRadarItems.length}
+                            </span>
+                          </div>
+
+                          {nearestHypeRadarItems.length === 0 ? (
+                            <div className="py-3 text-center">
+                              <p className="text-[0.76rem] font-medium text-[#8E95A2] mb-2">
+                                Sin estrenos próximos en seguimiento.
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingVaultItem(null);
+                                  setDefaultVaultGroup('proximamente');
+                                  setCreateModalMode('vault');
+                                }}
+                                className="px-3 py-1 rounded-full bg-[#FFFFFF] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[0.7rem] font-bold text-[#141519] cursor-pointer"
+                              >
+                                + Añadir estreno
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {nearestHypeRadarItems.map(({ item, countdown }) => (
+                                <div
+                                  key={item.id}
+                                  onClick={() => setActiveTab('vault')}
+                                  className="p-2 rounded-[14px] bg-[#FFFFFF] border border-[#EEF1F5] flex items-center justify-between gap-2.5 cursor-pointer hover:border-[#BBC6F8] transition-colors"
+                                >
+                                  <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="w-8 h-9 rounded-[10px] overflow-hidden shrink-0 border border-[#EEF1F5]">
+                                      <VisualArtwork
+                                        variant={item.artVariant}
+                                        accent={item.accent}
+                                        imageUrl={item.imageUrl}
+                                        alt={item.title}
+                                      />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-[0.78rem] font-bold text-[#141519] truncate">
+                                        {item.title}
+                                      </p>
+                                      <p className="text-[0.66rem] font-medium text-[#6E7480] truncate">
+                                        {countdown.formattedDate}
+                                      </p>
+                                    </div>
+                                  </div>
+
+                                  <span className="px-2.5 py-1 rounded-full bg-[#141519] text-white text-[0.66rem] font-bold tabular-nums shrink-0">
+                                    {countdown.isFuture
+                                      ? `${countdown.daysRemaining}d`
+                                      : 'Estrenado'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setActiveTab('vault')}
+                          className="mt-3 text-[0.72rem] font-bold text-[#6E7480] hover:text-[#141519] inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <span>Ver Hype Radar</span>
+                          <ArrowUpRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ----------------------------------------------------------------
                 1. HABILIDADES EN CURSO (ONGOING SKILLS - 7 COLS)
             ---------------------------------------------------------------- */}
             <div className="lg:col-span-7 bg-white rounded-[24px] p-5 sm:p-6 border border-[#EEF1F5] shadow-bento flex flex-col justify-between">
@@ -2033,10 +2454,6 @@ export default function App() {
                   }
                 />
 
-                <p className="text-[0.78rem] font-medium text-[#6E7480] mb-2">
-                  Selecciona cualquier cápsula para inspeccionar el foco del día:
-                </p>
-
                 <PillBarChart
                   data={activity}
                   selectedDate={selectedActivityDate}
@@ -2052,7 +2469,7 @@ export default function App() {
                     {selectedActivityObj?.dayLabel}
                   </span>
                   <span className="text-[0.84rem] font-bold text-[#141519]">
-                    Foco: {selectedActivityObj?.focusTopic}
+                    {selectedActivityObj?.focusTopic}
                   </span>
                 </div>
                 <span className="px-3 py-1 rounded-full bg-[#141519] text-white text-[0.78rem] font-bold tabular-nums">
@@ -2119,7 +2536,7 @@ export default function App() {
                     <SoftBentoEmptyState
                       icon={<Film className="w-5 h-5" />}
                       title="Tu Bóveda está lista"
-                      description="Registra tu primera película, serie, canción o persona en Firebase."
+                      description="Registra tu primera película, serie, canción o persona."
                       actionLabel="+ Agregar a Bóveda"
                       onAction={() => {
                         setEditingVaultItem(null);
@@ -2361,7 +2778,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setCreateModalMode('schedule')}
-                        title="Agendar nuevo bloque en Google Calendar"
+                        title="Agendar nuevo bloque"
                         className="w-8 h-8 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[#141519] flex items-center justify-center transition-colors cursor-pointer"
                       >
                         <Plus className="w-4 h-4" />
@@ -2370,7 +2787,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => setActiveTab('calendar')}
-                        title="Ver cronograma y Google Tasks"
+                        title="Ver cronograma completo"
                         className="w-8 h-8 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[#6E7480] hover:text-[#141519] flex items-center justify-center transition-colors cursor-pointer"
                       >
                         <MoreHorizontal className="w-4 h-4" />
@@ -2400,11 +2817,7 @@ export default function App() {
                 </div>
 
                 <div className="mt-4 pt-3.5 border-t border-[#EEF1F5] flex items-center justify-between text-[0.72rem] font-semibold text-[#6E7480]">
-                  <span>
-                    {hasGoogleToken
-                      ? '● Google Calendar & Tasks Conectado'
-                      : 'Google Calendar & Tasks Sync'}
-                  </span>
+                  <span>Día {selectedCalendarDay}</span>
                   <span className="text-[#141519] tabular-nums">
                     {schedule.length} eventos · {googleTasks.length} tareas
                   </span>
@@ -2528,8 +2941,15 @@ export default function App() {
         isOpen={isAssistantOpen}
         onClose={() => setIsAssistantOpen(false)}
         skills={skills}
-        isCloudConnected={Boolean(authUser)}
-        isGoogleWorkspaceConnected={hasGoogleToken}
+        vault={vault}
+        wishlist={wishlist}
+        extraSavingsPool={extraSavingsPool}
+        schedule={schedule}
+        isGoogleCalendarConnected={hasGoogleToken}
+        isFirestoreConnected={Boolean(authUser)}
+        conversations={assistantConversations}
+        onSaveConversation={handleSaveAssistantConversation}
+        onDeleteConversation={handleDeleteAssistantConversation}
         onExecuteAction={handleExecuteAiAction}
         onNavigateTab={setActiveTab}
       />

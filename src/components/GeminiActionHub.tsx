@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   X,
   ArrowUp,
@@ -15,8 +15,14 @@ import {
   Music,
   Film,
   Clock,
+  Mic,
+  Check,
+  History,
+  Plus,
+  MessageSquare,
 } from 'lucide-react';
 import {
+  AssistantConversation,
   ChatMessage,
   SkillItem,
   VaultItem,
@@ -40,14 +46,15 @@ interface GeminiActionHubProps {
   schedule: ScheduleBlock[];
   isGoogleCalendarConnected: boolean;
   isFirestoreConnected: boolean;
+  conversations: AssistantConversation[];
+  onSaveConversation: (conv: AssistantConversation) => Promise<void> | void;
+  onDeleteConversation: (convId: string) => Promise<void> | void;
   onExecuteAction: (action: {
     name: string;
     args: any;
   }) => Promise<AssistantActionRecord | null>;
   onNavigateTab: (tab: TabId) => void;
 }
-
-export type AssistantVoiceState = 'idle' | 'listening' | 'thinking' | 'speaking';
 
 const INITIAL_MESSAGES: ChatMessage[] = [
   {
@@ -66,13 +73,47 @@ const QUICK_PROMPTS = [
   'Agéndame un partido de fútbol este viernes a las 6 pm',
 ];
 
-const LIVE_WAVE_BARS = [
-  { delay: '0s', idleH: 8, activeH: 16, tone: 'lavender' },
-  { delay: '0.12s', idleH: 12, activeH: 24, tone: 'charcoal' },
-  { delay: '0.24s', idleH: 14, activeH: 28, tone: 'lavender' },
-  { delay: '0.08s', idleH: 11, activeH: 22, tone: 'charcoal' },
-  { delay: '0.18s', idleH: 8, activeH: 16, tone: 'lavender' },
-] as const;
+const BAR_COUNT = 34;
+
+// Precomputed organic envelope & animation delays for the 34 vertical equalizer lines
+const EQUALIZER_BARS = Array.from({ length: BAR_COUNT }, (_, idx) => {
+  const norm = Math.abs(idx - (BAR_COUNT - 1) / 2) / ((BAR_COUNT - 1) / 2);
+  const envelope = Math.max(0.25, Math.cos(norm * Math.PI * 0.48));
+  const activeHeight = Math.round(8 + envelope * 20);
+  const delay = `${((idx * 0.05) % 0.55).toFixed(2)}s`;
+  const isAccent = idx % 3 === 0;
+  return {
+    idx,
+    envelope,
+    activeHeight,
+    delay,
+    isAccent,
+  };
+});
+
+function formatRelativeSessionDate(isoDate: string): string {
+  try {
+    const d = new Date(isoDate);
+    if (isNaN(d.getTime())) return 'Reciente';
+    const now = new Date();
+    const isSameDay =
+      d.getDate() === now.getDate() &&
+      d.getMonth() === now.getMonth() &&
+      d.getFullYear() === now.getFullYear();
+    if (isSameDay) {
+      return `Hoy · ${d.toLocaleTimeString('es-ES', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`;
+    }
+    return d.toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: 'short',
+    });
+  } catch {
+    return 'Reciente';
+  }
+}
 
 export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
   isOpen,
@@ -82,30 +123,75 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
   wishlist,
   extraSavingsPool,
   schedule,
+  conversations,
+  onSaveConversation,
+  onDeleteConversation,
   onExecuteAction,
   onNavigateTab,
 }) => {
+  const [activeConversationId, setActiveConversationId] = useState<string>(
+    () => `conv-${Date.now()}`
+  );
   const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
+
+  // Voice Mode states
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [isUserSpeaking, setIsUserSpeaking] = useState(false);
+  const [isAiSpeaking, setIsAiSpeaking] = useState(false);
+  const [liveLevels, setLiveLevels] = useState<number[] | null>(null);
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
-  const speakingTimerRef = useRef<number | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const speechActivityTimeoutRef = useRef<number | null>(null);
+  const aiSpeakingTimerRef = useRef<number | null>(null);
+  const voiceDraftRef = useRef<string>('');
+  const isSubmittingRef = useRef<boolean>(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const aiState: AssistantVoiceState = isListening
-    ? 'listening'
-    : isLoading
-    ? 'thinking'
-    : isSpeaking || Boolean(playingUrl)
-    ? 'speaking'
-    : 'idle';
+  // Equalizer lines ONLY animate when the user is actively speaking or the AI is emitting spoken response
+  const isAudioWaveDancing = isUserSpeaking || isAiSpeaking;
 
-  const isWaveActive = aiState !== 'idle' || input.trim().length > 0;
+  // Show the equalizer bar in the center when Voice Mode is active OR when AI is speaking its response
+  const showEqualizerInCenter = isVoiceMode || isAiSpeaking;
+
+  const cleanupVoiceResources = useCallback(() => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (speechActivityTimeoutRef.current) {
+      window.clearTimeout(speechActivityTimeoutRef.current);
+      speechActivityTimeoutRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    setLiveLevels(null);
+    setIsUserSpeaking(false);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -115,54 +201,138 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
         audioRef.current.pause();
         setPlayingUrl(null);
       }
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-      setIsListening(false);
-      setIsSpeaking(false);
+      cleanupVoiceResources();
+      setIsVoiceMode(false);
+      setIsAiSpeaking(false);
+      setIsHistoryOpen(false);
+      voiceDraftRef.current = '';
     }
-  }, [messages, isOpen]);
+  }, [messages, isOpen, cleanupVoiceResources]);
 
   useEffect(() => {
     return () => {
+      cleanupVoiceResources();
       if (audioRef.current) {
         audioRef.current.pause();
       }
-      if (speakingTimerRef.current) {
-        window.clearTimeout(speakingTimerRef.current);
+      if (aiSpeakingTimerRef.current) {
+        window.clearTimeout(aiSpeakingTimerRef.current);
       }
     };
-  }, []);
+  }, [cleanupVoiceResources]);
 
   if (!isOpen) return null;
 
-  const triggerAssistantSpeakingWave = (replyText: string) => {
-    if (speakingTimerRef.current) {
-      window.clearTimeout(speakingTimerRef.current);
+  const handleStartNewSession = () => {
+    setActiveConversationId(`conv-${Date.now()}`);
+    setMessages(INITIAL_MESSAGES);
+    setIsHistoryOpen(false);
+    setInput('');
+    if (inputRef.current) {
+      inputRef.current.value = '';
     }
-    setIsSpeaking(true);
-    const durationMs = Math.min(4200, Math.max(2200, replyText.length * 28));
-    speakingTimerRef.current = window.setTimeout(() => {
-      setIsSpeaking(false);
+  };
+
+  const handleSelectConversation = (conv: AssistantConversation) => {
+    setActiveConversationId(conv.id);
+    setMessages(
+      Array.isArray(conv.messages) && conv.messages.length > 0
+        ? conv.messages
+        : INITIAL_MESSAGES
+    );
+    setIsHistoryOpen(false);
+  };
+
+  const pulseSpeechActivity = (durationMs = 650) => {
+    setIsUserSpeaking(true);
+    if (speechActivityTimeoutRef.current) {
+      window.clearTimeout(speechActivityTimeoutRef.current);
+    }
+    speechActivityTimeoutRef.current = window.setTimeout(() => {
+      setIsUserSpeaking(false);
     }, durationMs);
   };
 
-  const toggleVoiceCapture = () => {
-    if (isListening) {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-      setIsListening(false);
+  const startWebAudioMonitor = async () => {
+    if (
+      typeof navigator === 'undefined' ||
+      !navigator.mediaDevices ||
+      !navigator.mediaDevices.getUserMedia
+    ) {
       return;
     }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+
+      const AudioCtx =
+        window.AudioContext || (window as any).webkitAudioContext;
+      const audioCtx: AudioContext = new AudioCtx();
+      audioContextRef.current = audioCtx;
+
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      analyser.smoothingTimeConstant = 0.78;
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+      const tick = () => {
+        analyser.getByteFrequencyData(dataArray);
+
+        // Compute average voice energy in human speech bins
+        let sum = 0;
+        const binLimit = Math.min(20, dataArray.length);
+        for (let i = 1; i < binLimit; i++) {
+          sum += dataArray[i];
+        }
+        const avg = sum / Math.max(1, binLimit - 1);
+
+        // Threshold: only animate bars when actual voice sound is present
+        if (avg > 14) {
+          setIsUserSpeaking(true);
+          const mapped = EQUALIZER_BARS.map((bar, idx) => {
+            const binIdx = (idx % Math.max(1, binLimit - 2)) + 1;
+            const normLevel = Math.min(1, dataArray[binIdx] / 215);
+            return Math.max(
+              4,
+              Math.round(4 + normLevel * 24 * bar.envelope)
+            );
+          });
+          setLiveLevels(mapped);
+        } else {
+          setIsUserSpeaking(false);
+          setLiveLevels(null);
+        }
+
+        rafRef.current = requestAnimationFrame(tick);
+      };
+
+      rafRef.current = requestAnimationFrame(tick);
+    } catch {
+      // If microphone stream access is blocked by iframe policy, SpeechRecognition events handle speaking state
+    }
+  };
+
+  const startVoiceMode = () => {
+    // Clear any existing input text and enter Gemini Voice Bar mode
+    setInput('');
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+    voiceDraftRef.current = '';
+    setIsAiSpeaking(false);
+    setIsVoiceMode(true);
+    setIsUserSpeaking(false);
+
+    startWebAudioMonitor();
 
     const SpeechRecognitionAPI =
       (window as any).SpeechRecognition ||
@@ -173,44 +343,74 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
         const recognition = new SpeechRecognitionAPI();
         recognition.lang = 'es-ES';
         recognition.interimResults = true;
-        recognition.continuous = false;
+        recognition.continuous = true;
 
-        recognition.onstart = () => {
-          setIsListening(true);
+        recognition.onspeechstart = () => {
+          pulseSpeechActivity(900);
+        };
+
+        recognition.onspeechend = () => {
+          setIsUserSpeaking(false);
         };
 
         recognition.onresult = (event: any) => {
+          if (isSubmittingRef.current) return;
+          pulseSpeechActivity(700);
+
           let transcript = '';
           for (let i = 0; i < event.results.length; i++) {
             transcript += event.results[i][0].transcript;
           }
-          setInput(transcript);
-          if (event.results[0]?.isFinal && transcript.trim()) {
-            setIsListening(false);
-            handleSend(transcript.trim());
-          }
+          voiceDraftRef.current = transcript.trim();
         };
 
         recognition.onerror = () => {
-          setIsListening(false);
-        };
-
-        recognition.onend = () => {
-          setIsListening(false);
+          setIsUserSpeaking(false);
         };
 
         recognitionRef.current = recognition;
         recognition.start();
-        return;
       } catch {
-        // Fallback when microphone permission is restricted in iframe
+        // Ignore if already started or unsupported
       }
     }
+  };
 
-    setIsListening(true);
-    speakingTimerRef.current = window.setTimeout(() => {
-      setIsListening(false);
-    }, 3200);
+  const cancelVoiceMode = () => {
+    cleanupVoiceResources();
+    voiceDraftRef.current = '';
+    setInput('');
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+    setIsVoiceMode(false);
+    setIsAiSpeaking(false);
+  };
+
+  const finishAndSendVoice = () => {
+    const capturedText = voiceDraftRef.current.trim();
+    cleanupVoiceResources();
+    voiceDraftRef.current = '';
+    setInput('');
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+    setIsVoiceMode(false);
+
+    if (capturedText) {
+      handleSend(capturedText);
+    }
+  };
+
+  const triggerAssistantSpeakingWave = (replyText: string) => {
+    if (aiSpeakingTimerRef.current) {
+      window.clearTimeout(aiSpeakingTimerRef.current);
+    }
+    setIsAiSpeaking(true);
+    const durationMs = Math.min(2800, Math.max(1600, replyText.length * 20));
+    aiSpeakingTimerRef.current = window.setTimeout(() => {
+      setIsAiSpeaking(false);
+    }, durationMs);
   };
 
   const toggleMiniPreview = (previewUrl?: string) => {
@@ -254,11 +454,24 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
   };
 
   const handleSend = async (promptText?: string) => {
-    const textToSend = (promptText ?? input).trim();
+    const rawValue =
+      promptText !== undefined
+        ? promptText
+        : inputRef.current?.value ?? input;
+    const textToSend = rawValue.trim();
     if (!textToSend || isLoading) return;
 
-    setIsListening(false);
-    setIsSpeaking(false);
+    // Immediately clean up input and voice state so nothing stays stuck in the box
+    isSubmittingRef.current = true;
+    cleanupVoiceResources();
+    voiceDraftRef.current = '';
+    setInput('');
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+    setIsVoiceMode(false);
+    setIsAiSpeaking(false);
+    setIsHistoryOpen(false);
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -270,8 +483,8 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
       }),
     };
 
-    setMessages((prev) => [...prev, userMsg]);
-    if (!promptText) setInput('');
+    const nextMessagesWithUser = [...messages, userMsg];
+    setMessages(nextMessagesWithUser);
     setIsLoading(true);
 
     try {
@@ -300,6 +513,13 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
                 time: b.time,
                 dayOfMonth: b.dayOfMonth,
               })),
+              recentHistory: messages
+                .filter((m) => m.id !== 'msg-welcome')
+                .slice(-6)
+                .map((m) => ({
+                  role: m.role,
+                  content: m.content,
+                })),
             },
           }),
         });
@@ -349,8 +569,26 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
         actionsTaken: executedRecords,
       };
 
-      setMessages((prev) => [...prev, assistantMsg]);
+      const completeThread = [...nextMessagesWithUser, assistantMsg];
+      setMessages(completeThread);
       triggerAssistantSpeakingWave(finalReplyText);
+
+      // Persist conversation session to Firestore / local state
+      const existingConv = conversations.find(
+        (c) => c.id === activeConversationId
+      );
+      const firstUserMsg = completeThread.find((m) => m.role === 'user');
+      const rawTitle = existingConv?.title || firstUserMsg?.content || textToSend;
+      const cleanTitle =
+        rawTitle.length > 44 ? `${rawTitle.slice(0, 44)}...` : rawTitle;
+
+      const updatedConv: AssistantConversation = {
+        id: activeConversationId,
+        title: cleanTitle,
+        updatedAt: new Date().toISOString(),
+        messages: completeThread,
+      };
+      await onSaveConversation(updatedConv);
     } catch {
       setMessages((prev) => [
         ...prev,
@@ -364,36 +602,57 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
       ]);
     } finally {
       setIsLoading(false);
+      isSubmittingRef.current = false;
     }
-  };
-
-  const getWaveAnimClass = () => {
-    if (aiState === 'listening') return 'aether-vbar-listening';
-    if (aiState === 'thinking') return 'aether-vbar-thinking';
-    if (aiState === 'speaking') return 'aether-vbar-speaking';
-    if (input.trim().length > 0) return 'aether-vbar-thinking';
-    return 'aether-vbar-idle';
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#141519]/40 backdrop-blur-sm animate-fadeIn">
       <div className="bg-[#FFFFFF] rounded-[28px] w-full max-w-lg border border-[#EEF1F5] shadow-[0_24px_60px_-12px_rgba(20,21,25,0.22)] overflow-hidden flex flex-col max-h-[86vh]">
-        {/* Cabecera ultra limpia: solo título discreto y cierre */}
-        <div className="px-6 pt-5 pb-3 flex items-center justify-between">
-          <span className="text-[0.95rem] font-bold text-[#141519] tracking-tight">
-            Aether Assistant
-          </span>
+        {/* Cabecera limpia con acceso a Historial de Conversaciones y Nueva Sesión */}
+        <div className="px-6 pt-5 pb-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[0.95rem] font-bold text-[#141519] tracking-tight truncate">
+              Aether Assistant
+            </span>
 
-          <div className="flex items-center gap-1.5">
-            {messages.length > 1 && (
-              <button
-                onClick={() => setMessages(INITIAL_MESSAGES)}
-                title="Limpiar historial"
-                className="w-8 h-8 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] flex items-center justify-center text-[#6E7480] transition-colors cursor-pointer"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={() => setIsHistoryOpen((prev) => !prev)}
+              title="Historial de conversaciones guardadas"
+              className={`h-7 px-2.5 rounded-full text-[0.72rem] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
+                isHistoryOpen
+                  ? 'bg-[#141519] text-[#FFFFFF]'
+                  : 'bg-[#F7F9FB] hover:bg-[#EBF0F5] text-[#6E7480] hover:text-[#141519] border border-[#EEF1F5]'
+              }`}
+            >
+              <History className="w-3.5 h-3.5" />
+              <span>Historial</span>
+              {conversations.length > 0 && (
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[0.65rem] font-bold tabular-nums ${
+                    isHistoryOpen
+                      ? 'bg-[#A8E6E3] text-[#141519] keep-dark-text'
+                      : 'bg-[#EBF0F5] text-[#141519]'
+                  }`}
+                >
+                  {conversations.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleStartNewSession}
+              title="Iniciar nueva conversación limpia"
+              className="h-8 px-3 rounded-full bg-[#F7F9FB] hover:bg-[#A8E6E3]/45 border border-[#EEF1F5] text-[0.72rem] font-bold text-[#141519] flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Nueva</span>
+            </button>
+
             <button
               onClick={onClose}
               aria-label="Cerrar asistente"
@@ -404,9 +663,89 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
           </div>
         </div>
 
-        {/* Historial de Chat Limpio */}
+        {/* Panel Desplegable de Historial de Conversaciones (Firestore) */}
+        {isHistoryOpen && (
+          <div className="mx-6 mb-2 p-3.5 rounded-[20px] bg-[#F7F9FB] border border-[#EEF1F5] max-h-60 overflow-y-auto space-y-2 animate-fadeIn">
+            <div className="flex items-center justify-between px-1 mb-1">
+              <span className="text-[0.72rem] font-bold text-[#6E7480] uppercase tracking-wider">
+                Conversaciones recientes
+              </span>
+              <button
+                type="button"
+                onClick={handleStartNewSession}
+                className="text-[0.72rem] font-bold text-[#141519] hover:underline cursor-pointer"
+              >
+                + Sesión limpia
+              </button>
+            </div>
+
+            {conversations.length === 0 ? (
+              <p className="text-[0.76rem] font-medium text-[#8E95A2] py-3 text-center">
+                Tus conversaciones con Aether se guardarán aquí automáticamente.
+              </p>
+            ) : (
+              conversations.map((conv) => {
+                const isCurrent = conv.id === activeConversationId;
+                const userTurns = conv.messages.filter(
+                  (m) => m.role === 'user'
+                ).length;
+
+                return (
+                  <div
+                    key={conv.id}
+                    onClick={() => handleSelectConversation(conv)}
+                    className={`p-2.5 rounded-[14px] border flex items-center justify-between gap-2.5 transition-all cursor-pointer ${
+                      isCurrent
+                        ? 'bg-[#FFFFFF] border-[#141519] shadow-2xs'
+                        : 'bg-[#FFFFFF]/70 hover:bg-[#FFFFFF] border-[#EEF1F5]'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div
+                        className={`w-8 h-8 rounded-[10px] flex items-center justify-center shrink-0 ${
+                          isCurrent
+                            ? 'bg-[#A8E6E3] text-[#141519] keep-dark-text'
+                            : 'bg-[#F7F9FB] text-[#6E7480]'
+                        }`}
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[0.8rem] font-bold text-[#141519] truncate">
+                          {conv.title}
+                        </p>
+                        <p className="text-[0.68rem] font-medium text-[#8E95A2] tabular-nums">
+                          {formatRelativeSessionDate(conv.updatedAt)} ·{' '}
+                          {Math.max(1, userTurns)}{' '}
+                          {userTurns === 1 ? 'mensaje' : 'mensajes'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteConversation(conv.id);
+                        if (conv.id === activeConversationId) {
+                          handleStartNewSession();
+                        }
+                      }}
+                      title="Eliminar conversación"
+                      aria-label="Eliminar conversación"
+                      className="w-7 h-7 rounded-full hover:bg-[#F28B82]/25 text-[#8E95A2] hover:text-[#141519] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* Historial de Chat */}
         <div className="flex-1 overflow-y-auto px-6 py-3 space-y-4">
-          {/* Sugerencias iniciales solo cuando no hay conversación activa */}
           {messages.length === 1 && (
             <div className="flex flex-wrap gap-2 pb-1">
               {QUICK_PROMPTS.map((q) => (
@@ -604,93 +943,117 @@ export const GeminiActionHub: React.FC<GeminiActionHubProps> = ({
           <div ref={chatEndRef} />
         </div>
 
-        {/* Barra Inferior Flotante y Unificada estilo Gemini Live */}
+        {/* Píldora Flotante Inferior Unificada (Estilo Gemini Voice Equalizer) */}
         <div className="px-5 pb-5 pt-2">
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleSend();
+              if (isVoiceMode) {
+                finishAndSendVoice();
+              } else {
+                handleSend();
+              }
             }}
-            className={`flex items-center gap-3 p-2 rounded-[26px] bg-[#F7F9FB] border transition-all duration-300 shadow-[0_8px_28px_-6px_rgba(20,21,25,0.08)] ${
-              isWaveActive
-                ? 'border-[#BBC6F8] bg-[#FFFFFF]'
-                : 'border-[#EEF1F5]'
+            className={`flex items-center gap-2.5 p-2 rounded-full border transition-all duration-300 shadow-[0_8px_28px_-6px_rgba(20,21,25,0.08)] ${
+              showEqualizerInCenter
+                ? 'bg-[#FFFFFF] border-[#BBC6F8]'
+                : 'bg-[#F7F9FB] border-[#EEF1F5] focus-within:bg-[#FFFFFF] focus-within:border-[#BBC6F8]'
             }`}
           >
-            {/* Orbe / Ecualizador de Ondas de Voz a la Izquierda (Estilo Gemini Live) */}
-            <button
-              type="button"
-              onClick={toggleVoiceCapture}
-              title={
-                isListening
-                  ? 'Detener voz'
-                  : 'Activar voz estilo Gemini Live'
-              }
-              aria-label="Control de voz Gemini Live"
-              className="relative w-11 h-11 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-95 overflow-hidden"
-              style={{
-                background: isWaveActive
-                  ? 'linear-gradient(135deg, #AEBDF6 0%, #DAE2FC 55%, #98E2DE 100%)'
-                  : 'linear-gradient(135deg, rgba(187,198,248,0.45) 0%, rgba(243,246,248,0.9) 100%)',
-                border: '1.5px solid rgba(255, 255, 255, 0.9)',
-              }}
-            >
-              {/* Halo suave de fondo cuando está escuchando, pensando o hablando */}
-              {isWaveActive && (
-                <span
-                  className="absolute inset-0 rounded-full aether-orb-halo-ring"
-                  style={{
-                    background:
-                      'radial-gradient(circle, rgba(187,198,248,0.65) 0%, rgba(20,21,25,0) 75%)',
-                  }}
-                />
-              )}
+            {/* Botón Izquierdo: Micrófono (en reposo) o Cancelar Voz (en modo voz) */}
+            {showEqualizerInCenter ? (
+              <button
+                type="button"
+                onClick={cancelVoiceMode}
+                title="Salir del modo de voz"
+                aria-label="Salir del modo de voz"
+                className="w-10 h-10 rounded-full bg-[#F7F9FB] hover:bg-[#EBF0F5] text-[#6E7480] hover:text-[#141519] flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={startVoiceMode}
+                title="Hablar con Aether (Modo de voz)"
+                aria-label="Activar modo de voz"
+                className="w-10 h-10 rounded-full bg-[#FFFFFF] hover:bg-[#EBF0F5] text-[#141519] border border-[#EEF1F5] flex items-center justify-center shrink-0 transition-all cursor-pointer shadow-2xs"
+              >
+                <Mic className="w-4 h-4" />
+              </button>
+            )}
 
-              {/* Ecualizador orgánico de 5 barras fluidas */}
-              <div className="relative z-10 flex items-center justify-center gap-[3px] h-6">
-                {LIVE_WAVE_BARS.map((bar, idx) => (
-                  <span
-                    key={idx}
-                    className={`w-[3px] rounded-full aether-vbar ${getWaveAnimClass()}`}
-                    style={{
-                      height: `${isWaveActive ? bar.activeH : bar.idleH}px`,
-                      background:
-                        bar.tone === 'charcoal'
-                          ? '#141519'
-                          : isWaveActive
-                          ? '#141519'
-                          : '#7A8499',
-                      animationDelay: bar.delay,
-                    }}
-                  />
-                ))}
+            {/* Espacio Central: Input de Texto Habitual O Barra Horizontal de Líneas de Audio */}
+            {showEqualizerInCenter ? (
+              <div
+                onClick={() => pulseSpeechActivity(900)}
+                title="Habla ahora para animar el ecualizador"
+                className="flex-1 flex items-center justify-between gap-[3px] h-10 px-2 select-none cursor-pointer"
+              >
+                {EQUALIZER_BARS.map((bar) => {
+                  // Si hay niveles reales del micrófono (Web Audio API), úsalos;
+                  // si no hay audio activo, la línea queda plana (3px) y estática.
+                  const liveBarHeight = liveLevels?.[bar.idx];
+                  const heightPx = isAudioWaveDancing
+                    ? liveBarHeight ?? bar.activeHeight
+                    : 3;
+
+                  const shouldUseCssWave =
+                    isAudioWaveDancing && !liveLevels;
+
+                  return (
+                    <span
+                      key={bar.idx}
+                      className={`w-[2.5px] rounded-full transition-all duration-150 ${
+                        shouldUseCssWave
+                          ? 'aether-vbar aether-vbar-speaking'
+                          : ''
+                      }`}
+                      style={{
+                        height: `${heightPx}px`,
+                        backgroundColor: isAudioWaveDancing
+                          ? bar.isAccent
+                            ? '#141519'
+                            : '#9BA9F0'
+                          : '#C5CBD6',
+                        animationDelay: shouldUseCssWave ? bar.delay : undefined,
+                      }}
+                    />
+                  );
+                })}
               </div>
-            </button>
+            ) : (
+              <input
+                ref={inputRef}
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Habla o escribe a Aether..."
+                className="flex-1 bg-transparent px-1 py-2 text-[0.9rem] font-medium text-[#141519] placeholder-[#A0A6B2] focus:outline-none"
+              />
+            )}
 
-            {/* Campo de entrada limpio sin ruido visual */}
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                isListening
-                  ? 'Escuchando...'
-                  : isLoading
-                  ? 'Procesando...'
-                  : 'Habla o escribe a Aether...'
-              }
-              className="flex-1 bg-transparent py-2 text-[0.9rem] font-medium text-[#141519] placeholder-[#A0A6B2] focus:outline-none"
-            />
-
-            {/* Botón de envío circular en negro carbón */}
-            <button
-              type="submit"
-              disabled={!input.trim() || isLoading}
-              aria-label="Enviar mensaje"
-              className="w-10 h-10 rounded-full bg-[#141519] hover:bg-[#2A2C34] disabled:opacity-25 text-[#FFFFFF] flex items-center justify-center transition-all cursor-pointer shrink-0"
-            >
-              <ArrowUp className="w-4 h-4" />
-            </button>
+            {/* Botón Derecho: Enviar Texto o Finalizar/Enviar Audio */}
+            {isVoiceMode ? (
+              <button
+                type="button"
+                onClick={finishAndSendVoice}
+                title="Finalizar y enviar voz"
+                aria-label="Finalizar y enviar voz"
+                className="w-10 h-10 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-[#FFFFFF] flex items-center justify-center transition-all cursor-pointer shrink-0"
+              >
+                <Check className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!input.trim() || isLoading}
+                aria-label="Enviar mensaje"
+                className="w-10 h-10 rounded-full bg-[#141519] hover:bg-[#2A2C34] disabled:opacity-25 text-[#FFFFFF] flex items-center justify-center transition-all cursor-pointer shrink-0"
+              >
+                <ArrowUp className="w-4 h-4" />
+              </button>
+            )}
           </form>
         </div>
       </div>

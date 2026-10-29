@@ -21,6 +21,8 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import {
+  AssistantConversation,
+  ChatMessage,
   DailyActivity,
   SkillItem,
   VaultItem,
@@ -640,3 +642,126 @@ export async function upsertDailyHoursDoc(
     );
   }
 }
+
+/* ============================================================================
+   5. COLLECTION: `assistant_conversations`
+============================================================================ */
+export function sanitizeConversationMessages(messages: ChatMessage[]) {
+  return (messages || []).slice(-60).map((m) =>
+    cleanUndefined({
+      id: clampStr(m.id || `msg-${Date.now()}`, 80),
+      role: m.role === 'user' ? 'user' : 'assistant',
+      content: clampStr(m.content || '', 2000),
+      timestamp: clampStr(m.timestamp || 'Ahora', 40),
+      actionsTaken: m.actionsTaken
+        ? m.actionsTaken.slice(0, 6).map((act) =>
+            cleanUndefined({
+              name: clampStr(act.name, 60),
+              summary: clampStr(act.summary, 300),
+              targetModule: act.targetModule,
+              sourceBadge: act.sourceBadge
+                ? clampStr(act.sourceBadge, 80)
+                : undefined,
+              accent: act.accent === 'lavender' ? 'lavender' : 'mint',
+              details: act.details ? clampStr(act.details, 500) : undefined,
+              itemType: act.itemType,
+              title: act.title ? clampStr(act.title, 200) : undefined,
+              subtitle: act.subtitle ? clampStr(act.subtitle, 200) : undefined,
+              imageUrl: act.imageUrl ? clampStr(act.imageUrl, 1000) : undefined,
+              badgeText: act.badgeText ? clampStr(act.badgeText, 80) : undefined,
+              secondaryBadge: act.secondaryBadge
+                ? clampStr(act.secondaryBadge, 80)
+                : undefined,
+              progressPct:
+                typeof act.progressPct === 'number'
+                  ? Math.min(100, Math.max(0, act.progressPct))
+                  : undefined,
+              progressLabel: act.progressLabel
+                ? clampStr(act.progressLabel, 120)
+                : undefined,
+              spotifyUrl: act.spotifyUrl
+                ? clampStr(act.spotifyUrl, 500)
+                : undefined,
+              audioPreviewUrl: act.audioPreviewUrl
+                ? clampStr(act.audioPreviewUrl, 1000)
+                : undefined,
+              tags: act.tags
+                ? act.tags.slice(0, 6).map((t) => clampStr(String(t), 60))
+                : undefined,
+            })
+          )
+        : undefined,
+    })
+  );
+}
+
+export function subscribeAssistantConversations(
+  userId: string,
+  onData: (conversations: AssistantConversation[]) => void
+) {
+  const q = query(
+    collection(db, 'assistant_conversations'),
+    where('userId', '==', userId)
+  );
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const list: AssistantConversation[] = snapshot.docs.map((d) => ({
+        ...(d.data() as Omit<AssistantConversation, 'id'>),
+        id: d.id,
+      }));
+      list.sort((a, b) =>
+        (b.updatedAt || '').localeCompare(a.updatedAt || '')
+      );
+      onData(list);
+    },
+    (error) => {
+      handleFirestoreError(
+        error,
+        OperationType.LIST,
+        'assistant_conversations'
+      );
+    }
+  );
+}
+
+export async function saveAssistantConversationDoc(
+  userId: string,
+  conv: AssistantConversation
+): Promise<void> {
+  const cleanId = conv.id.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+  const nowIso = new Date().toISOString().slice(0, 60);
+  const payload = {
+    userId: clampStr(userId, 128),
+    title: clampStr(conv.title || 'Conversación Aether', 200),
+    messages: sanitizeConversationMessages(conv.messages),
+    createdAt: clampStr(conv.createdAt || nowIso, 60),
+    updatedAt: clampStr(conv.updatedAt || nowIso, 60),
+  };
+
+  try {
+    await setDoc(doc(db, 'assistant_conversations', cleanId), payload);
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      OperationType.WRITE,
+      `assistant_conversations/${cleanId}`
+    );
+  }
+}
+
+export async function deleteAssistantConversationDoc(
+  convId: string
+): Promise<void> {
+  const cleanId = convId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120);
+  try {
+    await deleteDoc(doc(db, 'assistant_conversations', cleanId));
+  } catch (error) {
+    handleFirestoreError(
+      error,
+      OperationType.DELETE,
+      `assistant_conversations/${cleanId}`
+    );
+  }
+}
+

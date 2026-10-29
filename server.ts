@@ -862,8 +862,9 @@ app.get("/api/spotify/search", async (req, res) => {
 });
 
 app.post("/api/assistant", async (req, res) => {
-  const { prompt, context } = req.body;
-  if (!prompt || typeof prompt !== "string") {
+  const prompt = String(req.body?.prompt || req.body?.message || "").trim();
+  const context = req.body?.context || req.body?.contextState || {};
+  if (!prompt) {
     return res.status(400).json({ error: "El mensaje es requerido." });
   }
 
@@ -889,6 +890,18 @@ app.post("/api/assistant", async (req, res) => {
       year: "numeric",
     });
 
+    const recentHistoryText = Array.isArray(context?.recentHistory)
+      ? context.recentHistory
+          .slice(-6)
+          .map(
+            (m: any) =>
+              `${m.role === "user" ? "Usuario" : "Asistente"}: ${String(
+                m.content || ""
+              ).slice(0, 240)}`
+          )
+          .join("\n")
+      : "";
+
     const systemInstruction = `Eres el Asistente de IA integrado en "Aether" (Aether Assistant), conectado en tiempo real a Firebase Firestore, Spotify API, IMDb/TMDB, Google Calendar API y Google Tasks API.
 Fecha actual: ${todayStr} (Día del mes: ${new Date().getDate()}).
 Cuando el usuario te pida registrar, actualizar o agendar algo, DEBES invocar las herramientas (Function Calling) correspondientes extrayendo con total precisión los datos:
@@ -908,7 +921,11 @@ Cuando el usuario te pida registrar, actualizar o agendar algo, DEBES invocar la
 Habilidades actuales en Firebase: ${JSON.stringify(
       context?.skills?.map((s: any) => ({ name: s.name, branch: s.branch })) || []
     )}.
-Responde siempre en español con un tono conciso, elegante y motivador.`;
+${
+  recentHistoryText
+    ? `Contexto reciente de esta sesión de conversación:\n${recentHistoryText}\n`
+    : ""
+}Responde siempre en español con un tono conciso, elegante y motivador.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",

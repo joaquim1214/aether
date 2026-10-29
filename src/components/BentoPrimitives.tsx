@@ -528,7 +528,7 @@ export const TimelineSchedule: React.FC<TimelineScheduleProps> = ({
                   {block.title}
                 </p>
                 <span className="block text-[0.72rem] font-semibold text-[#141519]/70 keep-dark-text tabular-nums mt-0.5">
-                  {formatAmPm(block.time)} · {block.syncedSource}
+                  {formatAmPm(block.time)}
                 </span>
               </div>
 

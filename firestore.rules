@@ -167,6 +167,21 @@ service cloud.firestore {
         data.updatedAt is string && data.updatedAt.size() <= 60;
     }
 
+    function isValidAssistantConversation(data) {
+      return data.keys().hasAll([
+          'userId', 'title', 'messages', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId', 'title', 'messages', 'createdAt', 'updatedAt'
+        ]) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.messages is list && data.messages.size() <= 100 &&
+        (data.messages.size() == 0 || data.messages[0] is map) &&
+        data.createdAt is string && data.createdAt.size() <= 60 &&
+        data.updatedAt is string && data.updatedAt.size() <= 60;
+    }
+
     // 4. Collection Match Blocks
     match /vault_items/{itemId} {
       allow get: if isVerifiedUser() && isValidId(itemId) && (resource == null || existing().userId == request.auth.uid);
@@ -244,5 +259,20 @@ service cloud.firestore {
         ]);
       allow delete: if isVerifiedUser() && isValidId(dayId) && existing().userId == request.auth.uid;
     }
+
+    match /assistant_conversations/{convId} {
+      allow get: if isVerifiedUser() && isValidId(convId) && (resource == null || existing().userId == request.auth.uid);
+      allow list: if isVerifiedUser() && existing().userId == request.auth.uid;
+      allow create: if isVerifiedUser() && isValidId(convId) && isValidAssistantConversation(incoming());
+      allow update: if isVerifiedUser() && isValidId(convId) && isValidAssistantConversation(incoming()) &&
+        existing().userId == request.auth.uid &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'messages', 'updatedAt'
+        ]);
+      allow delete: if isVerifiedUser() && isValidId(convId) && existing().userId == request.auth.uid;
+    }
   }
 }
+

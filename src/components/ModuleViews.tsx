@@ -527,8 +527,8 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 </div>
                 <p className="text-[0.75rem] font-medium text-[#6E7480]">
                   {spotifyProfile
-                    ? 'Cuenta vinculada · Importa tus playlists o busca canciones y álbumes directamente en Spotify.'
-                    : 'Vincula tu cuenta oficial con OAuth 2.0 PKCE para importar tus playlists y catálogo.'}
+                    ? 'Importa tus playlists o busca canciones y álbumes en Spotify.'
+                    : 'Vincula tu cuenta para importar playlists y catálogo.'}
                 </p>
               </div>
             </div>
@@ -987,10 +987,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
               />
             ) : (
               <>
-                <p className="text-[0.78rem] font-medium text-[#6E7480] mb-4">
-                  Películas, series y nuevas temporadas en tu radar de estrenos:
-                </p>
-
                 <div className="space-y-3">
                   {upcomingItems.map((up, idx) => {
                     const isLavenderBadge = idx % 2 === 1;
@@ -1082,8 +1078,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
             )}
           </div>
 
-          <div className="mt-4 pt-3.5 border-t border-[#EEF1F5] flex items-center justify-between text-[0.73rem] font-semibold text-[#6E7480]">
-            <span>Sincronizado en tiempo real con Firebase</span>
+          <div className="mt-4 pt-3.5 border-t border-[#EEF1F5] flex items-center justify-end text-[0.73rem] font-semibold text-[#6E7480]">
             <button
               type="button"
               onClick={() => setActiveFilter('proximamente')}
@@ -1327,7 +1322,7 @@ export const VaultView: React.FC<VaultViewProps> = ({
                                 : 'bg-[#BBC6F8]/65 text-[#141519]'
                             }`}
                           >
-                            🎵 {vibe}
+                            {vibe}
                           </span>
                         ))}
                       </div>
@@ -1335,13 +1330,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
                       <p className="text-[0.8rem] text-[#141519]/85 bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] leading-relaxed">
                         “{item.review}”
                       </p>
-                    </div>
-
-                    <div className="mt-4 pt-3 border-t border-[#EEF1F5] flex items-center justify-between text-[0.72rem] font-semibold text-[#8E95A2]">
-                      <span>Rotación: {item.consumedDate}</span>
-                      <span className="text-[#141519] font-bold">
-                        Tier {item.tier}
-                      </span>
                     </div>
                   </div>
                 );
@@ -1490,9 +1478,6 @@ export const VaultView: React.FC<VaultViewProps> = ({
                       )}
 
                       <div className="bg-[#F7F9FB] rounded-[16px] p-3.5 border border-[#EEF1F5] mb-4">
-                        <span className="block text-[0.68rem] font-bold text-[#8E95A2] uppercase mb-1">
-                          Notas clave, conversaciones & regalos:
-                        </span>
                         <p className="text-[0.8rem] text-[#141519]/90 leading-relaxed">
                           {item.review}
                         </p>
@@ -1680,27 +1665,15 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {item.tags.map((tag) => (
-                        <span
-                          key={tag}
-                          className="px-2.5 py-1 rounded-full bg-[#F7F9FB] border border-[#EEF1F5] text-[0.7rem] font-semibold text-[#141519]"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                    {item.imdbId && (
-                      <a
-                        href={`https://www.imdb.com/title/${item.imdbId}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-2.5 py-0.5 rounded-full bg-[#F7F9FB] hover:bg-[#141519] hover:text-white border border-[#EEF1F5] text-[0.66rem] font-bold text-[#6E7480] tabular-nums transition-colors"
+                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                    {item.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="px-2.5 py-1 rounded-full bg-[#F7F9FB] border border-[#EEF1F5] text-[0.7rem] font-semibold text-[#141519]"
                       >
-                        {item.imdbId} ↗
-                      </a>
-                    )}
+                        {tag}
+                      </span>
+                    ))}
                   </div>
                 </div>
               );
@@ -1897,13 +1870,9 @@ export const SkillsView: React.FC<SkillsViewProps> = ({
           <div>
             <BentoHeader
               icon={<Award className="w-4 h-4" />}
-              title="Bitácora de Hitos & Récords Personales"
+              title="Bitácora de Hitos & Récords"
               countBadge={`${unlockedMilestones} Logros`}
             />
-
-            <p className="text-[0.78rem] font-medium text-[#6E7480] mb-3.5">
-              Registra tus marcas deportivas (Básquet y Fútbol) y avances clave de tus proyectos:
-            </p>
 
             {skills.length > 0 && (
               <>
@@ -2208,7 +2177,7 @@ export const WishlistView: React.FC<WishlistViewProps> = ({
                 </div>
                 <div>
                   <span className="block text-[0.74rem] font-semibold text-[#6E7480]">
-                    Presupuesto y Ahorro Disponible (Sincronizado en Firestore)
+                    Fondo de Ahorro Disponible
                   </span>
                   <h2 className="text-[1.25rem] font-bold text-[#141519] tabular-nums">
                     ${totalAvailableLiquidity.toLocaleString()} USD{' '}
@@ -2270,18 +2239,11 @@ export const WishlistView: React.FC<WishlistViewProps> = ({
           </div>
 
           <div className="lg:col-span-5 bg-mint-gradient inner-card-stroke rounded-[20px] p-5 flex flex-col justify-between">
-            <div className="flex items-center justify-between gap-2 mb-2.5">
+            <div className="flex items-center justify-between gap-2 mb-3">
               <span className="px-3 py-1 rounded-full bg-[#141519] text-white text-[0.7rem] font-bold">
-                ⚡ Disponibles para comprar HOY ({buyableTodayItems.length})
-              </span>
-              <span className="text-[0.72rem] font-bold text-[#141519] keep-dark-text tabular-nums">
-                Liquidez OK
+                ⚡ Disponibles para comprar hoy ({buyableTodayItems.length})
               </span>
             </div>
-
-            <p className="text-[0.76rem] font-medium text-[#141519]/80 keep-dark-text mb-3">
-              Con tu ahorro actual + fondo libre ya puedes adquirir hoy mismo:
-            </p>
 
             <div className="space-y-2">
               {buyableTodayItems.slice(0, 3).map((readyItem) => (
@@ -2552,22 +2514,18 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-[1rem] font-bold text-[#141519]">
-                Google Calendar & Google Tasks API (OAuth 2.0)
+                Google Calendar & Tasks
               </h2>
-              <span
-                className={`px-2.5 py-0.5 rounded-full text-[0.68rem] font-bold ${
-                  isGoogleConnected
-                    ? 'bg-[#A8E6E3] text-[#141519] keep-dark-text'
-                    : 'bg-[#F7F9FB] text-[#6E7480] border border-[#EEF1F5]'
-                }`}
-              >
-                {isGoogleConnected ? '● Conectado en Vivo' : 'OAuth Pendiente'}
-              </span>
+              {isGoogleConnected && (
+                <span className="px-2.5 py-0.5 rounded-full text-[0.68rem] font-bold bg-[#A8E6E3] text-[#141519] keep-dark-text">
+                  ● Sincronizado
+                </span>
+              )}
             </div>
             <p className="text-[0.76rem] font-medium text-[#6E7480]">
               {isGoogleConnected
-                ? 'Tus eventos de Calendar y tu lista @default de Google Tasks están sincronizados en tiempo real.'
-                : 'Inicia sesión con Google para listar y crear eventos en tu Google Calendar y tareas en Google Tasks.'}
+                ? 'Tus eventos y tareas están sincronizados en tiempo real.'
+                : 'Conecta tu cuenta para sincronizar eventos y tareas.'}
             </p>
           </div>
         </div>
@@ -2662,11 +2620,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
               onAskAssistant={onAskAssistant}
             />
           </div>
-
-          <div className="mt-5 pt-3.5 border-t border-[#EEF1F5] flex items-center justify-between text-[0.72rem] font-semibold text-[#6E7480]">
-            <span>API: calendar/v3/calendars/primary/events</span>
-            <span className="text-[#141519] font-bold">POST / GET</span>
-          </div>
         </div>
 
         {/* Right (3 cols): Google Tasks (@default) Real Sync */}
@@ -2752,11 +2705,6 @@ export const CalendarView: React.FC<CalendarViewProps> = ({
                 })}
               </div>
             )}
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-[#EEF1F5] text-[0.7rem] font-semibold text-[#8E95A2] flex items-center justify-between">
-            <span>tasks/v1/lists/@default</span>
-            <span className="text-[#141519]">PATCH / POST</span>
           </div>
         </div>
       </div>

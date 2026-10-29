@@ -454,6 +454,40 @@
         "focusTopic",
         "updatedAt"
       ]
+    },
+    "AssistantConversation": {
+      "title": "AssistantConversation",
+      "description": "Saved conversation thread with the Aether Assistant in Firestore.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID of the authenticated owner.",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Summary title of the conversation session.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "messages": {
+          "type": "array",
+          "description": "Ordered chat messages and action records in the thread."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "ISO creation timestamp.",
+          "maxLength": 60
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO update timestamp.",
+          "maxLength": 60
+        }
+      },
+      "required": ["userId", "title", "messages", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -476,6 +510,11 @@
     "/daily_hours/{dayId}": {
       "schema": { "$ref": "#/entities/DailyHours" },
       "description": "User's daily dedication hours for the Pill Bar Chart."
+    },
+    "/assistant_conversations/{convId}": {
+      "schema": { "$ref": "#/entities/AssistantConversation" },
+      "description": "User's saved Aether Assistant conversation threads."
     }
   }
 }
+

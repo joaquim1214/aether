@@ -224,3 +224,21 @@ export interface AssistantMessage {
   timestamp: string;
   actions?: AssistantActionRecord[];
 }
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  actionsTaken?: AssistantActionRecord[];
+}
+
+export interface AssistantConversation {
+  id: string;
+  userId?: string;
+  title: string;
+  messages: ChatMessage[];
+  createdAt: string;
+  updatedAt: string;
+}
+
