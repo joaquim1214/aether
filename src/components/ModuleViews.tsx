@@ -53,8 +53,12 @@ import {
   SpotifyPlaylistItem,
 } from '../services/spotifyService';
 import {
+  computeReleaseCountdown,
   getAccurateHypeCountdown,
+  getInstantMediaSuggestions,
   MediaSearchResult,
+  normalizeSearchQuery,
+  searchMediaByCategory,
 } from '../services/mediaSearchService';
 
 const SpotifyMinimalLogo: React.FC<{ className?: string }> = ({
@@ -125,6 +129,9 @@ interface VaultViewProps {
   onOpenAssistant: () => void;
   onPreviewItem?: (item: VaultItem) => void;
   onPreviewSearchResult?: (item: MediaSearchResult) => void;
+  onHoverPreviewItem?: (item: VaultItem) => void;
+  onHoverPreviewSearchResult?: (item: MediaSearchResult) => void;
+  onHoverLeavePreview?: () => void;
   onEditItem?: (item: VaultItem) => void;
   onDeleteItem?: (item: VaultItem) => void;
   spotifyProfile?: { displayName: string; imageUrl?: string } | null;
@@ -150,6 +157,9 @@ export const VaultView: React.FC<VaultViewProps> = ({
   onOpenAssistant,
   onPreviewItem,
   onPreviewSearchResult,
+  onHoverPreviewItem,
+  onHoverPreviewSearchResult,
+  onHoverLeavePreview,
   onEditItem,
   onDeleteItem,
   spotifyProfile,
@@ -159,6 +169,33 @@ export const VaultView: React.FC<VaultViewProps> = ({
 }) => {
   const [activeFilter, setActiveFilter] = useState<VaultFilterId>('todo');
   const [localQuery, setLocalQuery] = useState('');
+  const [externalCatalogResults, setExternalCatalogResults] = useState<
+    MediaSearchResult[]
+  >([]);
+  const [isSearchingExternalCatalog, setIsSearchingExternalCatalog] =
+    useState(false);
+
+  // Touch-scroll guard so vertical scrolling on mobile never triggers accidental tap previews
+  const touchStartCoordsRef = React.useRef<{ x: number; y: number } | null>(
+    null
+  );
+
+  const handleCardTouchStart = (e: React.TouchEvent) => {
+    if (e.touches && e.touches.length > 0) {
+      touchStartCoordsRef.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+      };
+    }
+  };
+
+  const handleCardClickItem = (item: VaultItem) => {
+    onPreviewItem?.(item);
+  };
+
+  const handleCardClickSearchResult = (resItem: MediaSearchResult) => {
+    onPreviewSearchResult?.(resItem);
+  };
 
   // 30-Second Audio Preview Player state
   const [playingItemId, setPlayingItemId] = useState<string | null>(null);
@@ -217,13 +254,127 @@ export const VaultView: React.FC<VaultViewProps> = ({
           setIsSearchingSpotify(false);
         }
       }
-    }, 320);
+    }, 150);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
   }, [localQuery, activeFilter]);
+
+  // Instant 0ms + 120ms debounced Spanish movie/series catalog search in VaultView
+  useEffect(() => {
+    const queryStr = (localQuery || globalQuery).trim();
+    const isMediaFilter =
+      activeFilter === 'todo' ||
+      activeFilter === 'peliculas_series' ||
+      activeFilter === 'proximamente';
+
+    if (!isMediaFilter || queryStr.length < 2) {
+      setExternalCatalogResults([]);
+      setIsSearchingExternalCatalog(false);
+      return;
+    }
+
+    let cancelled = false;
+    const targetGroup: Exclude<VaultFilterId, 'todo'> =
+      activeFilter === 'proximamente' ? 'proximamente' : 'peliculas_series';
+
+    // 1. 0ms synchronous instant catalog & cache suggestions
+    const instant = getInstantMediaSuggestions(queryStr, targetGroup);
+    if (instant.length > 0) {
+      setExternalCatalogResults(instant.slice(0, 4));
+    }
+
+    setIsSearchingExternalCatalog(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const results = await searchMediaByCategory(
+          queryStr,
+          targetGroup,
+          true
+        );
+        if (!cancelled) {
+          if (results.length > 0 || instant.length === 0) {
+            setExternalCatalogResults(results.slice(0, 4));
+          }
+          setIsSearchingExternalCatalog(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setIsSearchingExternalCatalog(false);
+        }
+      }
+    }, 120);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [localQuery, globalQuery, activeFilter]);
+
+  const handleQuickSaveExternalMedia = async (resItem: MediaSearchResult) => {
+    if (!onSaveSpotifyItemToVault) return;
+    const targetGroup: Exclude<VaultFilterId, 'todo'> =
+      activeFilter === 'proximamente' || resItem.isFutureRelease
+        ? 'proximamente'
+        : 'peliculas_series';
+    const todayFormatted = new Date().toLocaleDateString('es-ES', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    const calc = resItem.rawReleaseDate
+      ? computeReleaseCountdown(resItem.rawReleaseDate)
+      : null;
+
+    await onSaveSpotifyItemToVault({
+      title: resItem.title,
+      creator: resItem.creator || 'Director / Creador',
+      category:
+        targetGroup === 'proximamente'
+          ? 'Próximamente'
+          : resItem.mediaType === 'series'
+          ? 'Serie'
+          : 'Cine',
+      vaultGroup: targetGroup,
+      rating: 9.5,
+      tier: 'S',
+      consumedDate:
+        targetGroup === 'proximamente' ? 'En Espera' : todayFormatted,
+      tags:
+        resItem.tags && resItem.tags.length > 0
+          ? resItem.tags.slice(0, 4)
+          : ['Favorito'],
+      review:
+        resItem.plot ||
+        resItem.overview ||
+        `Obra de ${resItem.creator} agregada desde el buscador rápido en español.`,
+      accent: targetGroup === 'proximamente' ? 'lavender' : 'mint',
+      artVariant: 'cyberpunk',
+      isFeaturedMasterpiece: targetGroup !== 'proximamente',
+      imageUrl: resItem.imageUrl,
+      releaseYear: resItem.year,
+      imdbId: resItem.imdbId,
+      imdbRating: resItem.imdbRating,
+      imdbVotes: resItem.imdbVotes,
+      actors: resItem.actors,
+      plot: resItem.plot || resItem.overview,
+      releaseDate:
+        targetGroup === 'proximamente'
+          ? calc?.formattedDate || resItem.releaseDate || 'Próximamente'
+          : undefined,
+      daysRemaining:
+        targetGroup === 'proximamente'
+          ? calc?.daysRemaining ?? resItem.daysRemaining ?? 30
+          : undefined,
+      hypeLevel: targetGroup === 'proximamente' ? 95 : undefined,
+      releaseFormat:
+        targetGroup === 'proximamente'
+          ? resItem.releaseFormat || 'Cines / Streaming'
+          : undefined,
+    });
+  };
 
   const handleLoadSpotifyPlaylists = async () => {
     setIsLoadingPlaylists(true);
@@ -408,34 +559,51 @@ export const VaultView: React.FC<VaultViewProps> = ({
     )}`;
   };
 
-  const effectiveSearch = (localQuery || globalQuery).toLowerCase().trim();
+  const effectiveSearch = normalizeSearchQuery(localQuery || globalQuery);
 
   // Featured Masterpieces (Tier S / 10 de 10) for the 60% Top-Left Pastel Feature Cards
-  const featuredItems = items
-    .filter(
-      (i) =>
-        i.vaultGroup !== 'proximamente' &&
-        (i.isFeaturedMasterpiece || i.tier === 'S')
-    )
-    .slice(0, 2);
+  const featuredItems = React.useMemo(
+    () =>
+      items
+        .filter(
+          (i) =>
+            i.vaultGroup !== 'proximamente' &&
+            (i.isFeaturedMasterpiece || i.tier === 'S')
+        )
+        .slice(0, 2),
+    [items]
+  );
 
   // Upcoming Hype Radar items for the 40% Top-Right Waitlist Card
-  const upcomingItems = items.filter((i) => i.vaultGroup === 'proximamente');
+  const upcomingItems = React.useMemo(
+    () => items.filter((i) => i.vaultGroup === 'proximamente'),
+    [items]
+  );
 
-  // Filtered catalog items for the adaptive grid
-  const filteredItems = items.filter((item) => {
-    const matchesTab =
-      activeFilter === 'todo' || item.vaultGroup === activeFilter;
-    const matchesSearch =
-      !effectiveSearch ||
-      item.title.toLowerCase().includes(effectiveSearch) ||
-      item.creator.toLowerCase().includes(effectiveSearch) ||
-      item.tags.some((t) => t.toLowerCase().includes(effectiveSearch)) ||
-      item.review.toLowerCase().includes(effectiveSearch) ||
-      (item.keyTakeaway &&
-        item.keyTakeaway.toLowerCase().includes(effectiveSearch));
-    return matchesTab && matchesSearch;
-  });
+  // 0ms accent-insensitive filtered catalog items for the adaptive grid
+  const filteredItems = React.useMemo(() => {
+    return items.filter((item) => {
+      const matchesTab =
+        activeFilter === 'todo' || item.vaultGroup === activeFilter;
+      if (!matchesTab) return false;
+      if (!effectiveSearch) return true;
+
+      const haystack = normalizeSearchQuery(
+        [
+          item.title,
+          item.creator,
+          item.category,
+          item.releaseYear || '',
+          item.actors || '',
+          item.plot || '',
+          item.review || '',
+          item.keyTakeaway || '',
+          ...(item.tags || []),
+        ].join(' ')
+      );
+      return haystack.includes(effectiveSearch);
+    });
+  }, [items, activeFilter, effectiveSearch]);
 
   const handleOpenModalForCurrentFilter = () => {
     if (activeFilter === 'todo') {
@@ -602,7 +770,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     return (
                       <div
                         key={sp.id}
-                        onClick={() => onPreviewSearchResult?.(sp)}
+                        onTouchStart={handleCardTouchStart}
+                        onClick={() => handleCardClickSearchResult(sp)}
+                        onMouseEnter={() => onHoverPreviewSearchResult?.(sp)}
+                        onMouseLeave={() => onHoverLeavePreview?.()}
                         className="p-3 rounded-[18px] bg-[#F7F9FB] hover:bg-[#EBF0F5]/60 border border-[#EEF1F5] flex flex-col justify-between gap-2.5 cursor-pointer transition-colors"
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -788,6 +959,109 @@ export const VaultView: React.FC<VaultViewProps> = ({
       )}
 
       {/* ====================================================================
+          RESULTADOS RÁPIDOS DEL CATÁLOGO EN ESPAÑOL (0ms CACHÉ + TMDB/IMDb ES)
+      ==================================================================== */}
+      {(activeFilter === 'todo' ||
+        activeFilter === 'peliculas_series' ||
+        activeFilter === 'proximamente') &&
+        (localQuery.trim().length >= 2 || globalQuery.trim().length >= 2) &&
+        (externalCatalogResults.length > 0 || isSearchingExternalCatalog) && (
+          <div className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento">
+            <div className="flex items-center justify-between gap-2 mb-3.5">
+              <div className="flex items-center gap-2">
+                <span className="w-7 h-7 rounded-[10px] bg-[#A8E6E3]/50 text-[#141519] flex items-center justify-center">
+                  <Film className="w-3.5 h-3.5" />
+                </span>
+                <div>
+                  <h3 className="text-[0.88rem] font-bold text-[#141519]">
+                    Catálogo en Español para “
+                    {(localQuery || globalQuery).trim()}”
+                  </h3>
+                  <p className="text-[0.7rem] font-medium text-[#6E7480]">
+                    Pasa el cursor en laptop o toca en móvil para abrir la vista
+                    previa rápida
+                  </p>
+                </div>
+              </div>
+              {isSearchingExternalCatalog && (
+                <span className="text-[0.7rem] font-semibold text-[#6E7480] flex items-center gap-1.5">
+                  <RefreshCw className="w-3 h-3 animate-spin text-[#6CD4CE]" />
+                  <span>Actualizando...</span>
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {externalCatalogResults.map((resItem) => (
+                <div
+                  key={resItem.id}
+                  onTouchStart={handleCardTouchStart}
+                  onClick={() => handleCardClickSearchResult(resItem)}
+                  onMouseEnter={() => onHoverPreviewSearchResult?.(resItem)}
+                  onMouseLeave={() => onHoverLeavePreview?.()}
+                  className="p-3 rounded-[18px] bg-[#F7F9FB] hover:bg-[#EBF0F5]/65 border border-[#EEF1F5] flex flex-col justify-between gap-2.5 cursor-pointer transition-all hover:-translate-y-0.5"
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="w-12 h-16 rounded-[12px] bg-[#EBF0F5] overflow-hidden shrink-0 border border-white shadow-2xs">
+                      {resItem.imageUrl ? (
+                        <img
+                          src={resItem.imageUrl}
+                          alt={resItem.title}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <Film className="w-5 h-5 text-[#6E7480] m-3.5" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap mb-0.5">
+                        {resItem.year && (
+                          <span className="text-[0.66rem] font-bold text-[#6E7480] tabular-nums">
+                            {resItem.year}
+                          </span>
+                        )}
+                        {resItem.imdbRating && (
+                          <span className="px-1.5 py-0.2 rounded-full bg-[#F5C518] text-[#141519] keep-dark-text text-[0.62rem] font-extrabold tabular-nums">
+                            ★ {resItem.imdbRating}
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="text-[0.82rem] font-bold text-[#141519] leading-snug line-clamp-1">
+                        {resItem.title}
+                      </h4>
+                      <p className="text-[0.7rem] font-medium text-[#6E7480] truncate">
+                        {resItem.creator}
+                      </p>
+                      {(resItem.plot || resItem.overview) && (
+                        <p className="text-[0.68rem] text-[#6E7480] line-clamp-2 mt-1 leading-relaxed">
+                          {resItem.plot || resItem.overview}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-[#EEF1F5]">
+                    <span className="text-[0.66rem] font-semibold text-[#6E7480] truncate">
+                      {resItem.tags?.slice(0, 2).join(' · ') || 'Ficha ES'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleQuickSaveExternalMedia(resItem);
+                      }}
+                      className="h-7 px-3 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.68rem] font-semibold shrink-0 cursor-pointer transition-colors"
+                    >
+                      + Guardar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      {/* ====================================================================
           2. SECCIÓN SUPERIOR BENTO: DESTACADOS DEL MES (60%) + PRÓXIMAMENTE (40%)
       ==================================================================== */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
@@ -830,7 +1104,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                   return (
                     <div
                       key={fav.id}
-                      onClick={() => onPreviewItem?.(fav)}
+                      onTouchStart={handleCardTouchStart}
+                      onClick={() => handleCardClickItem(fav)}
+                      onMouseEnter={() => onHoverPreviewItem?.(fav)}
+                      onMouseLeave={() => onHoverLeavePreview?.()}
                       className={`${gradientClass} inner-card-stroke rounded-[20px] p-5 flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer`}
                     >
                       <div className="flex items-start justify-between gap-2 mb-4">
@@ -1019,11 +1296,14 @@ export const VaultView: React.FC<VaultViewProps> = ({
                     return (
                       <div
                         key={up.id}
+                        onTouchStart={handleCardTouchStart}
                         onClick={() =>
                           onPreviewItem
-                            ? onPreviewItem(up)
+                            ? handleCardClickItem(up)
                             : setActiveFilter('proximamente')
                         }
+                        onMouseEnter={() => onHoverPreviewItem?.(up)}
+                        onMouseLeave={() => onHoverLeavePreview?.()}
                         className="p-3.5 rounded-[20px] bg-[#F7F9FB] hover:bg-[#EBF0F5]/60 border border-[#EEF1F5] flex flex-col gap-2.5 cursor-pointer transition-all"
                       >
                         <div className="flex items-center justify-between gap-3">
@@ -1185,7 +1465,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 return (
                   <div
                     key={item.id}
-                    onClick={() => onPreviewItem?.(item)}
+                    onTouchStart={handleCardTouchStart}
+                    onClick={() => handleCardClickItem(item)}
+                    onMouseEnter={() => onHoverPreviewItem?.(item)}
+                    onMouseLeave={() => onHoverLeavePreview?.()}
                     className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                   >
                     <div>
@@ -1374,7 +1657,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 return (
                   <div
                     key={item.id}
-                    onClick={() => onPreviewItem?.(item)}
+                    onTouchStart={handleCardTouchStart}
+                    onClick={() => handleCardClickItem(item)}
+                    onMouseEnter={() => onHoverPreviewItem?.(item)}
+                    onMouseLeave={() => onHoverLeavePreview?.()}
                     className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                   >
                     <div>
@@ -1548,7 +1834,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
                 return (
                   <div
                     key={item.id}
-                    onClick={() => onPreviewItem?.(item)}
+                    onTouchStart={handleCardTouchStart}
+                    onClick={() => handleCardClickItem(item)}
+                    onMouseEnter={() => onHoverPreviewItem?.(item)}
+                    onMouseLeave={() => onHoverLeavePreview?.()}
                     className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                   >
                     <div>
@@ -1624,7 +1913,10 @@ export const VaultView: React.FC<VaultViewProps> = ({
               return (
                 <div
                   key={item.id}
-                  onClick={() => onPreviewItem?.(item)}
+                  onTouchStart={handleCardTouchStart}
+                  onClick={() => handleCardClickItem(item)}
+                  onMouseEnter={() => onHoverPreviewItem?.(item)}
+                  onMouseLeave={() => onHoverLeavePreview?.()}
                   className="bg-[#FFFFFF] rounded-[24px] p-5 border border-[#EEF1F5] shadow-bento flex flex-col justify-between transition-transform duration-150 hover:-translate-y-0.5 cursor-pointer"
                 >
                   <div>

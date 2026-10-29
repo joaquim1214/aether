@@ -257,6 +257,11 @@
   animation: aether-tab-fade 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+.soft-bento-hover-popover {
+  transition: all 0.2s ease-in-out;
+  will-change: opacity, transform;
+}
+
 /* ============================================================================
    ANIMACIÓN DE ONDAS DE VOZ Y ORBE ORGÁNICO (AETHER ASSISTANT · GEMINI LIVE STYLE)
 ============================================================================ */

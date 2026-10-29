@@ -28,6 +28,7 @@ import {
 } from '../types/lifeOs';
 import {
   computeReleaseCountdown,
+  getInstantMediaSuggestions,
   MediaSearchResult,
   searchMediaByCategory,
 } from '../services/mediaSearchService';
@@ -52,6 +53,14 @@ interface QuickCreateModalProps {
       targetGroup?: Exclude<VaultFilterId, 'todo'>
     ) => void
   ) => void;
+  onHoverPreviewSearchResult?: (
+    item: MediaSearchResult,
+    onSelectFromPreview: (
+      selected: MediaSearchResult,
+      targetGroup?: Exclude<VaultFilterId, 'todo'>
+    ) => void
+  ) => void;
+  onHoverLeaveSearchResult?: () => void;
 }
 
 const ModalAudioWave: React.FC<{ active: boolean }> = ({ active }) => (
@@ -107,6 +116,8 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
   onAddWishlist,
   onAddSchedule,
   onPreviewSearchResult,
+  onHoverPreviewSearchResult,
+  onHoverLeaveSearchResult,
 }) => {
   const todayIso = new Date().toISOString().split('T')[0];
 
@@ -308,7 +319,7 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
     };
   }, []);
 
-  // 300ms Debounced Live API Search (TMDB/IMDb, Estrenos, Spotify, YouTube)
+  // 0ms Instant Cache/Catalog + 120ms Agile Debounced Live API Search (TMDB/IMDb en Español, Estrenos, Spotify, YouTube)
   useEffect(() => {
     if (
       mode !== 'vault' ||
@@ -322,16 +333,27 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
     }
 
     let cancelled = false;
+
+    // 1. Respuesta instantánea en 0ms desde caché local y catálogo en español
+    const instantMatches = getInstantMediaSuggestions(magicQuery, vGroup);
+    if (instantMatches.length > 0) {
+      setMagicResults(instantMatches);
+      setShowDropdown(true);
+    }
+
     setIsSearchingMedia(true);
 
+    // 2. Debounce ágil (120ms) para consulta en vivo en español
     const timer = window.setTimeout(async () => {
       const results = await searchMediaByCategory(magicQuery, vGroup, true);
       if (!cancelled) {
-        setMagicResults(results);
+        if (results.length > 0 || instantMatches.length === 0) {
+          setMagicResults(results);
+        }
         setShowDropdown(true);
         setIsSearchingMedia(false);
       }
-    }, 300);
+    }, 120);
 
     return () => {
       cancelled = true;
@@ -807,6 +829,19 @@ export const QuickCreateModal: React.FC<QuickCreateModalProps> = ({
             <div
               key={resItem.id}
               onClick={() => handleSelectMediaResult(resItem)}
+              onMouseEnter={() => {
+                if (onHoverPreviewSearchResult) {
+                  onHoverPreviewSearchResult(resItem, (selected, targetGroup) => {
+                    if (targetGroup && targetGroup !== vGroup) {
+                      setVGroup(targetGroup);
+                    }
+                    handleSelectMediaResult(selected);
+                  });
+                }
+              }}
+              onMouseLeave={() => {
+                onHoverLeaveSearchResult?.();
+              }}
               className="w-full p-2.5 hover:bg-[#F7F9FB] flex items-center justify-between gap-3 text-left transition-colors cursor-pointer"
             >
               <div className="flex items-center gap-3 min-w-0">

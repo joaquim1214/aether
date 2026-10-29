@@ -27,9 +27,23 @@ import {
 } from '../services/mediaSearchService';
 import { VisualArtwork } from './VisualArtwork';
 
+export interface AnchorRectLike {
+  top: number;
+  left: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+}
+
 export interface MediaPreviewModalProps {
   vaultItem?: VaultItem | null;
   searchResult?: MediaSearchResult | null;
+  triggerMode?: 'hover' | 'click';
+  anchorRect?: AnchorRectLike | null;
+  onHoverEnterModal?: () => void;
+  onHoverLeaveModal?: () => void;
+  onPinModal?: () => void;
   onClose: () => void;
   onUpdateVaultItem?: (updated: VaultItem) => Promise<void> | void;
   onEditFullVaultItem?: (item: VaultItem) => void;
@@ -43,15 +57,26 @@ export interface MediaPreviewModalProps {
 export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   vaultItem,
   searchResult,
+  triggerMode = 'click',
+  anchorRect = null,
   onClose,
   onUpdateVaultItem,
   onEditFullVaultItem,
   onDeleteVaultItem,
   onSelectSearchResult,
 }) => {
-  const isOpen = Boolean(vaultItem || searchResult);
+  const hasIncomingData = Boolean(vaultItem || searchResult);
 
-  // Quick-edit state for saved VaultItems
+  // Keep a snapshot of the last active item so the 0.2s ease-in-out exit animation can play smoothly
+  const [renderedData, setRenderedData] = useState<{
+    vaultItem?: VaultItem | null;
+    searchResult?: MediaSearchResult | null;
+    triggerMode: 'hover' | 'click';
+    anchorRect?: AnchorRectLike | null;
+  } | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+
+  // Quick-edit state for saved VaultItems (only in click/tap modal mode)
   const [isQuickEditing, setIsQuickEditing] = useState(false);
   const [quickRating, setQuickRating] = useState<string>('9.5');
   const [quickTier, setQuickTier] = useState<VaultTier>('S');
@@ -59,78 +84,296 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   const [isSavingQuickEdit, setIsSavingQuickEdit] = useState(false);
 
   useEffect(() => {
-    if (vaultItem) {
-      setQuickRating(String(vaultItem.rating ?? 9.5));
-      setQuickTier(vaultItem.tier || 'S');
-      setQuickReview(vaultItem.review || '');
+    if (hasIncomingData) {
+      setRenderedData({
+        vaultItem,
+        searchResult,
+        triggerMode,
+        anchorRect,
+      });
+      const raf = window.requestAnimationFrame(() => {
+        setIsVisible(true);
+      });
+      return () => window.cancelAnimationFrame(raf);
+    } else {
+      setIsVisible(false);
+      const timer = window.setTimeout(() => {
+        setRenderedData(null);
+      }, 200);
+      return () => window.clearTimeout(timer);
+    }
+  }, [hasIncomingData, vaultItem, searchResult, triggerMode, anchorRect]);
+
+  const activeVaultItem = vaultItem ?? renderedData?.vaultItem ?? null;
+  const activeSearchResult = searchResult ?? renderedData?.searchResult ?? null;
+  const activeTriggerMode = hasIncomingData
+    ? triggerMode
+    : renderedData?.triggerMode || 'click';
+  const activeAnchorRect = hasIncomingData
+    ? anchorRect
+    : renderedData?.anchorRect || null;
+
+  useEffect(() => {
+    if (activeVaultItem) {
+      setQuickRating(String(activeVaultItem.rating ?? 9.5));
+      setQuickTier(activeVaultItem.tier || 'S');
+      setQuickReview(activeVaultItem.review || '');
       setIsQuickEditing(false);
     } else {
       setIsQuickEditing(false);
     }
-  }, [vaultItem, searchResult]);
+  }, [activeVaultItem?.id, activeSearchResult?.id]);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (!hasIncomingData) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [hasIncomingData, onClose]);
 
-  const title = vaultItem?.title || searchResult?.title || 'Sin título';
+  if (!renderedData && !hasIncomingData) return null;
+
+  const isHoverPopover = activeTriggerMode === 'hover' && !isQuickEditing;
+
+  const title =
+    activeVaultItem?.title || activeSearchResult?.title || 'Sin título';
   const creator =
-    vaultItem?.creator || searchResult?.creator || 'Director / Creador';
+    activeVaultItem?.creator ||
+    activeSearchResult?.creator ||
+    'Director / Creador';
   const year =
-    vaultItem?.releaseYear ||
-    searchResult?.year ||
-    (vaultItem?.releaseDate
-      ? vaultItem.releaseDate.match(/\b(19|20)\d{2}\b/)?.[0]
+    activeVaultItem?.releaseYear ||
+    activeSearchResult?.year ||
+    (activeVaultItem?.releaseDate
+      ? activeVaultItem.releaseDate.match(/\b(19|20)\d{2}\b/)?.[0]
       : undefined) ||
     '';
-  const imageUrl = vaultItem?.imageUrl || searchResult?.imageUrl;
-  const imdbId = vaultItem?.imdbId || searchResult?.imdbId;
-  const imdbRating = vaultItem?.imdbRating || searchResult?.imdbRating;
-  const imdbVotes = vaultItem?.imdbVotes || searchResult?.imdbVotes;
-  const actors = vaultItem?.actors || searchResult?.actors;
+  const imageUrl = activeVaultItem?.imageUrl || activeSearchResult?.imageUrl;
+  const imdbId = activeVaultItem?.imdbId || activeSearchResult?.imdbId;
+  const imdbRating =
+    activeVaultItem?.imdbRating || activeSearchResult?.imdbRating;
+  const imdbVotes = activeVaultItem?.imdbVotes || activeSearchResult?.imdbVotes;
+  const actors = activeVaultItem?.actors || activeSearchResult?.actors;
   const plot =
-    vaultItem?.plot ||
-    searchResult?.plot ||
-    searchResult?.overview ||
-    (searchResult ? '' : vaultItem?.review);
-  const personalReview = vaultItem?.review || '';
-  const tags = vaultItem?.tags || searchResult?.tags || [];
+    activeVaultItem?.plot ||
+    activeSearchResult?.plot ||
+    activeSearchResult?.overview ||
+    (activeSearchResult ? '' : activeVaultItem?.review);
+  const personalReview = activeVaultItem?.review || '';
+  const tags = activeVaultItem?.tags || activeSearchResult?.tags || [];
   const categoryLabel =
-    vaultItem?.category ||
-    (searchResult?.mediaType === 'series'
+    activeVaultItem?.category ||
+    (activeSearchResult?.mediaType === 'series'
       ? 'Serie'
-      : searchResult?.mediaType === 'song' ||
-        searchResult?.mediaType === 'album'
+      : activeSearchResult?.mediaType === 'song' ||
+        activeSearchResult?.mediaType === 'album'
       ? 'Música'
-      : searchResult?.mediaType === 'video'
+      : activeSearchResult?.mediaType === 'video'
       ? 'Video'
       : 'Cine');
 
   const isUpcoming =
-    vaultItem?.vaultGroup === 'proximamente' ||
-    searchResult?.releaseStatus === 'upcoming' ||
-    Boolean(searchResult?.isFutureRelease);
+    activeVaultItem?.vaultGroup === 'proximamente' ||
+    activeSearchResult?.releaseStatus === 'upcoming' ||
+    Boolean(activeSearchResult?.isFutureRelease);
 
   const countdown = isUpcoming
     ? getAccurateHypeCountdown(
-        vaultItem?.releaseDate || searchResult?.releaseDate,
-        vaultItem?.daysRemaining ?? searchResult?.daysRemaining
+        activeVaultItem?.releaseDate || activeSearchResult?.releaseDate,
+        activeVaultItem?.daysRemaining ?? activeSearchResult?.daysRemaining
       )
     : null;
 
+  // Smart non-intrusive positioning for Desktop Hover Popover so it never blocks the cursor
+  const getHoverPopoverStyle = (): React.CSSProperties => {
+    const baseTransition: React.CSSProperties = {
+      transition: 'all 0.2s ease-in-out',
+      opacity: isVisible ? 1 : 0,
+      transform: isVisible
+        ? 'scale(1) translateY(0px)'
+        : 'scale(0.95) translateY(6px)',
+    };
+
+    if (typeof window === 'undefined' || !activeAnchorRect) {
+      return {
+        ...baseTransition,
+        right: '24px',
+        bottom: '24px',
+      };
+    }
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const popoverWidth = 390;
+    const popoverHeight = 360;
+    const gap = 16;
+
+    let left = activeAnchorRect.right + gap;
+    if (left + popoverWidth > vw - 16) {
+      if (activeAnchorRect.left - popoverWidth - gap >= 16) {
+        left = activeAnchorRect.left - popoverWidth - gap;
+      } else {
+        left = Math.max(16, vw - popoverWidth - 20);
+      }
+    }
+
+    let top = activeAnchorRect.top;
+    if (top + popoverHeight > vh - 16) {
+      top = Math.max(16, vh - popoverHeight - 20);
+    }
+    if (top < 16) top = 16;
+
+    return {
+      ...baseTransition,
+      top: `${Math.round(top)}px`,
+      left: `${Math.round(left)}px`,
+    };
+  };
+
+  /* ==========================================================================
+     MODO 1: DESKTOP HOVER POPOVER (NO INTRUSIVO, SIN BACKDROP, CIERRE INMEDIATO)
+  ========================================================================== */
+  if (isHoverPopover) {
+    return (
+      <div
+        role="tooltip"
+        aria-live="polite"
+        style={getHoverPopoverStyle()}
+        className="soft-bento-hover-popover fixed z-[55] w-[390px] max-w-[calc(100vw-32px)] pointer-events-none bg-[#FFFFFF] rounded-[24px] border border-[#EEF1F5] shadow-[0_20px_50px_-10px_rgba(20,21,25,0.22)] overflow-hidden"
+      >
+        {/* Top Pastel Accent Strip */}
+        <div className="px-4 py-3 bg-soft-mesh-header border-b border-[#EEF1F5] flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-6 h-6 rounded-[9px] bg-[#141519] text-[#A8E6E3] flex items-center justify-center shrink-0">
+              <Film className="w-3.5 h-3.5" />
+            </span>
+            <span className="text-[0.68rem] font-bold uppercase tracking-wider text-[#6E7480] truncate">
+              {categoryLabel}
+              {year ? ` · ${year}` : ''}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {imdbRating && (
+              <span className="px-2 py-0.5 rounded-full bg-[#F5C518] text-[#141519] keep-dark-text text-[0.65rem] font-extrabold tabular-nums">
+                IMDb {imdbRating} ★
+              </span>
+            )}
+            {activeVaultItem && activeVaultItem.vaultGroup !== 'proximamente' && (
+              <span className="px-2 py-0.5 rounded-full bg-[#141519] text-white text-[0.66rem] font-bold tabular-nums">
+                {activeVaultItem.rating.toFixed(1)} ★ · Tier{' '}
+                {activeVaultItem.tier}
+              </span>
+            )}
+            {isUpcoming && countdown && (
+              <span className="px-2 py-0.5 rounded-full bg-[#BBC6F8] text-[#141519] keep-dark-text text-[0.66rem] font-bold tabular-nums">
+                {countdown.daysRemaining === 0
+                  ? '¡Hoy!'
+                  : `Faltan ${countdown.daysRemaining}d`}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Compact Popover Content */}
+        <div className="p-4 space-y-3">
+          <div className="flex items-start gap-3.5">
+            <div className="w-20 h-28 rounded-[14px] overflow-hidden border border-[#EEF1F5] bg-[#F3F6F8] shrink-0 shadow-2xs">
+              {imageUrl ? (
+                <img
+                  src={imageUrl}
+                  alt={title}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <VisualArtwork
+                  variant={activeVaultItem?.artVariant || 'cinema'}
+                  className="w-full h-full"
+                />
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <h4 className="text-[0.98rem] font-bold text-[#141519] leading-snug line-clamp-2">
+                {title}
+              </h4>
+              <p className="text-[0.74rem] font-semibold text-[#6E7480] truncate">
+                Dir. / Autor: <strong className="text-[#141519]">{creator}</strong>
+              </p>
+
+              {actors && (
+                <p className="text-[0.7rem] font-medium text-[#6E7480] line-clamp-1">
+                  👥 {actors}
+                </p>
+              )}
+
+              {tags.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                  {tags.slice(0, 3).map((tag, idx) => (
+                    <span
+                      key={`${tag}-${idx}`}
+                      className="px-2 py-0.5 rounded-full bg-[#F3F6F8] border border-[#EEF1F5] text-[0.64rem] font-semibold text-[#141519]"
+                    >
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {plot && (
+            <div className="p-3 rounded-[14px] bg-[#F7F9FB] border border-[#EEF1F5]">
+              <p className="text-[0.75rem] font-medium text-[#141519] leading-relaxed line-clamp-3">
+                {plot}
+              </p>
+            </div>
+          )}
+
+          {activeVaultItem &&
+            personalReview &&
+            personalReview !== plot && (
+              <div className="px-3 py-2 rounded-[14px] bg-mint-gradient keep-dark-text border border-white/80">
+                <p className="text-[0.72rem] font-semibold text-[#141519] line-clamp-2">
+                  “{personalReview}”
+                </p>
+              </div>
+            )}
+
+          <div className="pt-1 flex items-center justify-between text-[0.66rem] font-semibold text-[#8E95A2]">
+            <span>Vista previa rápida</span>
+            <span className="text-[#141519] font-bold">
+              Haz clic en la tarjeta para acciones
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ==========================================================================
+     MODO 2: MODAL COMPLETO INTERACTIVO (AL HACER CLIC EN DESKTOP O TAP EN MÓVIL)
+  ========================================================================== */
   const handleSaveQuickRatingAndReview = async () => {
-    if (!vaultItem || !onUpdateVaultItem) return;
+    if (!activeVaultItem || !onUpdateVaultItem) return;
     setIsSavingQuickEdit(true);
     try {
       const parsedRating = Math.min(
         10,
-        Math.max(1, parseFloat(quickRating) || vaultItem.rating || 9.0)
+        Math.max(1, parseFloat(quickRating) || activeVaultItem.rating || 9.0)
       );
       const updated: VaultItem = {
-        ...vaultItem,
+        ...activeVaultItem,
         rating: Number(parsedRating.toFixed(1)),
         tier: quickTier,
-        review: quickReview.trim() || vaultItem.review,
+        review: quickReview.trim() || activeVaultItem.review,
         isFeaturedMasterpiece:
-          vaultItem.vaultGroup !== 'proximamente' && quickTier === 'S',
+          activeVaultItem.vaultGroup !== 'proximamente' && quickTier === 'S',
       };
       await onUpdateVaultItem(updated);
       setIsQuickEditing(false);
@@ -140,41 +383,39 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   };
 
   const handleToggleVaultStatus = async () => {
-    if (!vaultItem || !onUpdateVaultItem) return;
+    if (!activeVaultItem || !onUpdateVaultItem) return;
     const todayFormatted = new Date().toLocaleDateString('es-ES', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
     });
 
-    if (vaultItem.vaultGroup === 'proximamente') {
-      // Move from Hype Radar (Próximamente) -> Películas & Series (Ya vista)
+    if (activeVaultItem.vaultGroup === 'proximamente') {
       const nextCategory: VaultCategory =
-        vaultItem.releaseFormat?.toLowerCase().includes('serie')
+        activeVaultItem.releaseFormat?.toLowerCase().includes('serie')
           ? 'Serie'
           : 'Cine';
       const updated: VaultItem = {
-        ...vaultItem,
+        ...activeVaultItem,
         vaultGroup: 'peliculas_series',
         category: nextCategory,
         consumedDate: todayFormatted,
         accent: 'mint',
-        rating: vaultItem.rating || 9.5,
-        tier: vaultItem.tier || 'S',
-        isFeaturedMasterpiece: (vaultItem.tier || 'S') === 'S',
+        rating: activeVaultItem.rating || 9.5,
+        tier: activeVaultItem.tier || 'S',
+        isFeaturedMasterpiece: (activeVaultItem.tier || 'S') === 'S',
       };
       await onUpdateVaultItem(updated);
     } else {
-      // Move from Películas & Series -> Próximamente (Hype Radar)
       const updated: VaultItem = {
-        ...vaultItem,
+        ...activeVaultItem,
         vaultGroup: 'proximamente',
         category: 'Próximamente',
         consumedDate: 'En Espera',
         accent: 'lavender',
-        releaseDate: vaultItem.releaseDate || 'Próximo estreno',
-        daysRemaining: vaultItem.daysRemaining ?? 30,
-        hypeLevel: vaultItem.hypeLevel ?? 95,
+        releaseDate: activeVaultItem.releaseDate || 'Próximo estreno',
+        daysRemaining: activeVaultItem.daysRemaining ?? 30,
+        hypeLevel: activeVaultItem.hypeLevel ?? 95,
         isFeaturedMasterpiece: false,
       };
       await onUpdateVaultItem(updated);
@@ -182,22 +423,31 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   };
 
   const handleToggleMasterpiece = async () => {
-    if (!vaultItem || !onUpdateVaultItem) return;
+    if (!activeVaultItem || !onUpdateVaultItem) return;
     const updated: VaultItem = {
-      ...vaultItem,
-      isFeaturedMasterpiece: !vaultItem.isFeaturedMasterpiece,
-      tier: !vaultItem.isFeaturedMasterpiece ? 'S' : vaultItem.tier,
+      ...activeVaultItem,
+      isFeaturedMasterpiece: !activeVaultItem.isFeaturedMasterpiece,
+      tier: !activeVaultItem.isFeaturedMasterpiece ? 'S' : activeVaultItem.tier,
     };
     await onUpdateVaultItem(updated);
   };
 
   return (
     <div
-      className="fixed inset-0 z-[55] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-[#141519]/50 backdrop-blur-xs animate-fadeIn"
-      onClick={onClose}
+      style={{
+        transition: 'all 0.2s ease-in-out',
+        opacity: isVisible ? 1 : 0,
+      }}
+      className="fixed inset-0 z-[55] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-[#141519]/50 backdrop-blur-xs pointer-events-auto"
+      onClick={() => onClose()}
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        style={{
+          transition: 'all 0.2s ease-in-out',
+          opacity: isVisible ? 1 : 0,
+          transform: isVisible ? 'scale(1)' : 'scale(0.96)',
+        }}
         className="w-full max-w-full sm:max-w-[680px] max-h-[92dvh] sm:max-h-[88vh] bg-[#FFFFFF] rounded-t-[28px] sm:rounded-[28px] border border-[#EEF1F5] shadow-[0_24px_60px_-12px_rgba(20,21,25,0.28)] overflow-hidden flex flex-col"
       >
         {/* Top Header Bar */}
@@ -208,7 +458,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             </span>
             <div className="min-w-0">
               <span className="text-[0.7rem] font-bold uppercase tracking-wider text-[#6E7480] block">
-                {vaultItem
+                {activeVaultItem
                   ? 'Ficha Interactiva de Bóveda'
                   : 'Vista Previa de Catálogo'}
               </span>
@@ -220,7 +470,10 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
 
           <button
             type="button"
-            onClick={onClose}
+            onClick={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
             aria-label="Cerrar vista previa"
             className="w-9 h-9 rounded-full bg-[#F7F9FB] hover:bg-[#141519] text-[#6E7480] hover:text-white flex items-center justify-center transition-colors cursor-pointer shrink-0"
           >
@@ -243,21 +496,23 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                 />
               ) : (
                 <VisualArtwork
-                  variant={vaultItem?.artVariant || 'cinema'}
+                  variant={activeVaultItem?.artVariant || 'cinema'}
                   className="w-full h-full"
                 />
               )}
 
               {/* Floating Top Badge on Poster */}
               <div className="absolute top-2.5 left-2.5 flex flex-wrap gap-1.5">
-                {vaultItem && vaultItem.vaultGroup !== 'proximamente' && (
-                  <span className="px-2.5 py-1 rounded-full bg-[#141519]/90 backdrop-blur-md text-white text-[0.7rem] font-bold flex items-center gap-1 shadow-xs">
-                    <Star className="w-3 h-3 text-[#A8E6E3] fill-[#A8E6E3]" />
-                    <span>
-                      {vaultItem.rating.toFixed(1)} · Tier {vaultItem.tier}
+                {activeVaultItem &&
+                  activeVaultItem.vaultGroup !== 'proximamente' && (
+                    <span className="px-2.5 py-1 rounded-full bg-[#141519]/90 backdrop-blur-md text-white text-[0.7rem] font-bold flex items-center gap-1 shadow-xs">
+                      <Star className="w-3 h-3 text-[#A8E6E3] fill-[#A8E6E3]" />
+                      <span>
+                        {activeVaultItem.rating.toFixed(1)} · Tier{' '}
+                        {activeVaultItem.tier}
+                      </span>
                     </span>
-                  </span>
-                )}
+                  )}
                 {isUpcoming && countdown && (
                   <span className="px-2.5 py-1 rounded-full bg-[#BBC6F8] text-[#141519] keep-dark-text text-[0.7rem] font-bold flex items-center gap-1 shadow-xs">
                     <Hourglass className="w-3 h-3" />
@@ -308,7 +563,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                   </a>
                 )}
 
-                {vaultItem?.isFeaturedMasterpiece && (
+                {activeVaultItem?.isFeaturedMasterpiece && (
                   <span className="px-2.5 py-1 rounded-full bg-[#141519] text-[#A8E6E3] text-[0.7rem] font-bold inline-flex items-center gap-1">
                     <Award className="w-3 h-3" />
                     <span>Obra Maestra</span>
@@ -346,16 +601,16 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                     <Calendar className="w-3.5 h-3.5" />
                     <span>Estreno: {countdown.formattedDate}</span>
                   </span>
-                ) : vaultItem?.consumedDate ? (
+                ) : activeVaultItem?.consumedDate ? (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F7F9FB] border border-[#EEF1F5] text-[#6E7480]">
                     <Clock className="w-3.5 h-3.5" />
-                    <span>Registrado: {vaultItem.consumedDate}</span>
+                    <span>Registrado: {activeVaultItem.consumedDate}</span>
                   </span>
                 ) : null}
 
-                {vaultItem?.releaseFormat && (
+                {activeVaultItem?.releaseFormat && (
                   <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#F7F9FB] border border-[#EEF1F5] text-[#141519]">
-                    <span>{vaultItem.releaseFormat}</span>
+                    <span>{activeVaultItem.releaseFormat}</span>
                   </span>
                 )}
               </div>
@@ -389,7 +644,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
               </div>
             )}
 
-            {vaultItem &&
+            {activeVaultItem &&
               personalReview &&
               personalReview !== plot &&
               !isQuickEditing && (
@@ -405,7 +660,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           </div>
 
           {/* Inline Quick Edit Form (for saved VaultItem) */}
-          {vaultItem && isQuickEditing && (
+          {activeVaultItem && isQuickEditing && (
             <div className="p-4 rounded-[22px] bg-[#F3F6F8] border border-[#141519]/15 space-y-3.5 animate-fadeIn">
               <div className="flex items-center justify-between">
                 <span className="text-[0.78rem] font-bold text-[#141519] flex items-center gap-1.5">
@@ -490,7 +745,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
 
         {/* Footer Action Bar */}
         <div className="px-5 sm:px-6 py-4 bg-[#F7F9FB] border-t border-[#EEF1F5] flex flex-wrap items-center justify-between gap-2.5 shrink-0">
-          {vaultItem ? (
+          {activeVaultItem ? (
             <>
               <div className="flex flex-wrap items-center gap-2">
                 {/* Quick Edit Rating/Review Button */}
@@ -511,14 +766,14 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
 
                 {/* Switch State Button (Próximamente <-> Ya Vista) */}
                 {onUpdateVaultItem &&
-                  (vaultItem.vaultGroup === 'peliculas_series' ||
-                    vaultItem.vaultGroup === 'proximamente') && (
+                  (activeVaultItem.vaultGroup === 'peliculas_series' ||
+                    activeVaultItem.vaultGroup === 'proximamente') && (
                     <button
                       type="button"
                       onClick={handleToggleVaultStatus}
                       className="h-10 px-4 rounded-full bg-[#BBC6F8]/45 hover:bg-[#BBC6F8]/75 text-[#141519] keep-dark-text text-[0.78rem] font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
-                      {vaultItem.vaultGroup === 'proximamente' ? (
+                      {activeVaultItem.vaultGroup === 'proximamente' ? (
                         <>
                           <Check className="w-3.5 h-3.5" />
                           <span>Marcar como Ya Vista</span>
@@ -534,12 +789,12 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
 
                 {/* Toggle Masterpiece */}
                 {onUpdateVaultItem &&
-                  vaultItem.vaultGroup !== 'proximamente' && (
+                  activeVaultItem.vaultGroup !== 'proximamente' && (
                     <button
                       type="button"
                       onClick={handleToggleMasterpiece}
                       className={`h-10 px-3.5 rounded-full text-[0.76rem] font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                        vaultItem.isFeaturedMasterpiece
+                        activeVaultItem.isFeaturedMasterpiece
                           ? 'bg-[#A8E6E3] text-[#141519] keep-dark-text'
                           : 'bg-white hover:bg-[#EBF0F5] border border-[#EEF1F5] text-[#6E7480]'
                       }`}
@@ -555,7 +810,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const target = vaultItem;
+                      const target = activeVaultItem;
                       onClose();
                       onEditFullVaultItem(target);
                     }}
@@ -571,7 +826,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const target = vaultItem;
+                      const target = activeVaultItem;
                       onClose();
                       onDeleteVaultItem(target);
                     }}
@@ -584,7 +839,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                 )}
               </div>
             </>
-          ) : searchResult && onSelectSearchResult ? (
+          ) : activeSearchResult && onSelectSearchResult ? (
             <div className="w-full flex flex-wrap items-center justify-between gap-2">
               <span className="text-[0.75rem] font-medium text-[#6E7480]">
                 Selecciona cómo deseas usar este resultado:
@@ -593,7 +848,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    onSelectSearchResult(searchResult, 'proximamente');
+                    onSelectSearchResult(activeSearchResult, 'proximamente');
                     onClose();
                   }}
                   className="h-10 px-4 rounded-full bg-[#BBC6F8] hover:brightness-95 text-[#141519] keep-dark-text text-[0.78rem] font-bold flex items-center gap-1.5 cursor-pointer"
@@ -604,7 +859,10 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    onSelectSearchResult(searchResult, 'peliculas_series');
+                    onSelectSearchResult(
+                      activeSearchResult,
+                      'peliculas_series'
+                    );
                     onClose();
                   }}
                   className="h-10 px-4 rounded-full bg-[#141519] hover:bg-[#2A2C34] text-white text-[0.78rem] font-bold flex items-center gap-1.5 cursor-pointer"

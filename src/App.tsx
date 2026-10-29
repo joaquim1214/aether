@@ -69,7 +69,10 @@ import {
 } from './components/ModuleViews';
 import { GeminiActionHub } from './components/GeminiActionHub';
 import { QuickCreateModal } from './components/QuickCreateModal';
-import { MediaPreviewModal } from './components/MediaPreviewModal';
+import {
+  AnchorRectLike,
+  MediaPreviewModal,
+} from './components/MediaPreviewModal';
 import {
   FloatingToastAlert,
   FloatingToastBanner,
@@ -118,6 +121,7 @@ import {
   findBestMediaMatch,
   getAccurateHypeCountdown,
   MediaSearchResult,
+  normalizeSearchQuery,
 } from './services/mediaSearchService';
 import {
   completeSpotifyPkceHandshake,
@@ -241,11 +245,139 @@ export default function App() {
   const [previewMediaState, setPreviewMediaState] = useState<{
     vaultItem?: VaultItem | null;
     searchResult?: MediaSearchResult | null;
+    triggerMode?: 'hover' | 'click';
+    anchorRect?: AnchorRectLike | null;
     onSelectSearchResult?: (
       selected: MediaSearchResult,
       targetGroup?: Exclude<VaultFilterId, 'todo'>
     ) => void;
   } | null>(null);
+  const hoverOpenTimerRef = React.useRef<number | null>(null);
+  const hoverCloseTimerRef = React.useRef<number | null>(null);
+
+  const isDesktopHoverDevice = useCallback(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  }, []);
+
+  const captureHoveredCardRect = useCallback((): AnchorRectLike | null => {
+    if (typeof document === 'undefined') return null;
+    try {
+      const hoveredChain = Array.from(document.querySelectorAll(':hover'));
+      for (let i = hoveredChain.length - 1; i >= 0; i--) {
+        const el = hoveredChain[i] as HTMLElement;
+        if (
+          el &&
+          typeof el.getBoundingClientRect === 'function' &&
+          (el.classList?.contains('cursor-pointer') ||
+            el.getAttribute('role') === 'button')
+        ) {
+          const r = el.getBoundingClientRect();
+          if (r.width >= 120 && r.height >= 36) {
+            return {
+              top: r.top,
+              left: r.left,
+              right: r.right,
+              bottom: r.bottom,
+              width: r.width,
+              height: r.height,
+            };
+          }
+        }
+      }
+    } catch {
+      // ignore selector errors
+    }
+    return null;
+  }, []);
+
+  const clearHoverTimers = useCallback(() => {
+    if (hoverOpenTimerRef.current !== null) {
+      window.clearTimeout(hoverOpenTimerRef.current);
+      hoverOpenTimerRef.current = null;
+    }
+    if (hoverCloseTimerRef.current !== null) {
+      window.clearTimeout(hoverCloseTimerRef.current);
+      hoverCloseTimerRef.current = null;
+    }
+  }, []);
+
+  // 350ms Hover Intent before showing the non-intrusive Soft Bento floating popover
+  const handleHoverEnterVaultItem = useCallback(
+    (item: VaultItem) => {
+      if (!isDesktopHoverDevice()) return;
+      if (item.vaultGroup === 'personas') return;
+      clearHoverTimers();
+      const anchorRect = captureHoveredCardRect();
+      hoverOpenTimerRef.current = window.setTimeout(() => {
+        setPreviewMediaState((prev) => {
+          if (prev?.triggerMode === 'click') return prev;
+          return {
+            vaultItem: item,
+            triggerMode: 'hover',
+            anchorRect,
+          };
+        });
+      }, 350);
+    },
+    [isDesktopHoverDevice, clearHoverTimers, captureHoveredCardRect]
+  );
+
+  // 350ms Hover Intent for search results
+  const handleHoverEnterSearchResult = useCallback(
+    (
+      resItem: MediaSearchResult,
+      onSelectFromPreview?: (
+        selected: MediaSearchResult,
+        targetGroup?: Exclude<VaultFilterId, 'todo'>
+      ) => void
+    ) => {
+      if (!isDesktopHoverDevice()) return;
+      clearHoverTimers();
+      const anchorRect = captureHoveredCardRect();
+      hoverOpenTimerRef.current = window.setTimeout(() => {
+        setPreviewMediaState((prev) => {
+          if (prev?.triggerMode === 'click') return prev;
+          return {
+            searchResult: resItem,
+            triggerMode: 'hover',
+            anchorRect,
+            onSelectSearchResult: onSelectFromPreview,
+          };
+        });
+      }, 350);
+    },
+    [isDesktopHoverDevice, clearHoverTimers, captureHoveredCardRect]
+  );
+
+  // Immediate close when moving cursor off the hovered element
+  const handleHoverLeaveSource = useCallback(() => {
+    if (!isDesktopHoverDevice()) return;
+    clearHoverTimers();
+    setPreviewMediaState((prev) =>
+      prev?.triggerMode === 'hover' ? null : prev
+    );
+  }, [isDesktopHoverDevice, clearHoverTimers]);
+
+  const handleHoverEnterModal = useCallback(() => {
+    clearHoverTimers();
+  }, [clearHoverTimers]);
+
+  const handleHoverLeaveModal = useCallback(() => {
+    if (!isDesktopHoverDevice()) return;
+    clearHoverTimers();
+    setPreviewMediaState((prev) =>
+      prev?.triggerMode === 'hover' ? null : prev
+    );
+  }, [isDesktopHoverDevice, clearHoverTimers]);
+
+  const handlePinPreviewModal = useCallback(() => {
+    clearHoverTimers();
+    setPreviewMediaState((prev) =>
+      prev ? { ...prev, triggerMode: 'click' } : null
+    );
+  }, [clearHoverTimers]);
+
   const [defaultVaultGroup, setDefaultVaultGroup] = useState<
     Exclude<VaultFilterId, 'todo'>
   >('peliculas_series');
@@ -1965,14 +2097,20 @@ export default function App() {
     },
   ];
 
-  const filteredVaultRecents = vault
-    .filter(
-      (item) =>
-        !vaultMiniSearch.trim() ||
-        item.title.toLowerCase().includes(vaultMiniSearch.toLowerCase()) ||
-        item.category.toLowerCase().includes(vaultMiniSearch.toLowerCase())
-    )
-    .slice(0, 4);
+  const normalizedMiniQuery = normalizeSearchQuery(vaultMiniSearch);
+  const filteredVaultRecents = React.useMemo(
+    () =>
+      vault
+        .filter((item) => {
+          if (!normalizedMiniQuery) return true;
+          const haystack = normalizeSearchQuery(
+            `${item.title} ${item.creator} ${item.category} ${(item.tags || []).join(' ')}`
+          );
+          return haystack.includes(normalizedMiniQuery);
+        })
+        .slice(0, 4),
+    [vault, normalizedMiniQuery]
+  );
 
   const dayScheduleBlocks = schedule.filter(
     (b) => b.dayOfMonth === selectedCalendarDay
@@ -2618,9 +2756,17 @@ export default function App() {
                               {nearestHypeRadarItems.map(({ item, countdown }) => (
                                 <div
                                   key={item.id}
-                                  onClick={() =>
-                                    setPreviewMediaState({ vaultItem: item })
+                                  onClick={() => {
+                                    clearHoverTimers();
+                                    setPreviewMediaState({
+                                      vaultItem: item,
+                                      triggerMode: 'click',
+                                    });
+                                  }}
+                                  onMouseEnter={() =>
+                                    handleHoverEnterVaultItem(item)
                                   }
+                                  onMouseLeave={handleHoverLeaveSource}
                                   className="p-2 rounded-[14px] bg-[#FFFFFF] border border-[#EEF1F5] flex items-center justify-between gap-2.5 cursor-pointer hover:border-[#BBC6F8] transition-colors"
                                 >
                                   <div className="flex items-center gap-2.5 min-w-0">
@@ -2821,9 +2967,15 @@ export default function App() {
                       return (
                         <div
                           key={item.id}
-                          onClick={() =>
-                            setPreviewMediaState({ vaultItem: item })
-                          }
+                          onClick={() => {
+                            clearHoverTimers();
+                            setPreviewMediaState({
+                              vaultItem: item,
+                              triggerMode: 'click',
+                            });
+                          }}
+                          onMouseEnter={() => handleHoverEnterVaultItem(item)}
+                          onMouseLeave={handleHoverLeaveSource}
                           className="p-3.5 rounded-[20px] bg-lavender-gradient border-2 border-white/75 text-[#141519] keep-dark-text cursor-pointer transition-transform hover:scale-[1.01] shadow-2xs"
                         >
                           <div className="flex items-center justify-between gap-3 mb-2.5">
@@ -2979,9 +3131,15 @@ export default function App() {
                         return (
                           <div
                             key={item.id}
-                            onClick={() =>
-                              setPreviewMediaState({ vaultItem: item })
-                            }
+                            onClick={() => {
+                              clearHoverTimers();
+                              setPreviewMediaState({
+                                vaultItem: item,
+                                triggerMode: 'click',
+                              });
+                            }}
+                            onMouseEnter={() => handleHoverEnterVaultItem(item)}
+                            onMouseLeave={handleHoverLeaveSource}
                             className={`p-2.5 rounded-[16px] hover:bg-[#F7F9FB] border transition-all cursor-pointer ${
                               isUpcoming
                                 ? 'bg-[#F7F9FB]/75 border-[#EEF1F5] flex flex-col gap-2'
@@ -3256,10 +3414,22 @@ export default function App() {
               setCreateModalMode('vault');
             }}
             onOpenAssistant={() => setIsAssistantOpen(true)}
-            onPreviewItem={(item) => setPreviewMediaState({ vaultItem: item })}
-            onPreviewSearchResult={(resItem) =>
-              setPreviewMediaState({ searchResult: resItem })
+            onPreviewItem={(item) => {
+              clearHoverTimers();
+              setPreviewMediaState({ vaultItem: item, triggerMode: 'click' });
+            }}
+            onPreviewSearchResult={(resItem) => {
+              clearHoverTimers();
+              setPreviewMediaState({
+                searchResult: resItem,
+                triggerMode: 'click',
+              });
+            }}
+            onHoverPreviewItem={handleHoverEnterVaultItem}
+            onHoverPreviewSearchResult={(resItem) =>
+              handleHoverEnterSearchResult(resItem)
             }
+            onHoverLeavePreview={handleHoverLeaveSource}
             onEditItem={handleOpenEditVault}
             onDeleteItem={requestDeleteVaultItem}
             spotifyProfile={spotifyProfile}
@@ -3390,18 +3560,32 @@ export default function App() {
         onAddSkill={handleCreateSkill}
         onAddWishlist={handleCreateWishlist}
         onAddSchedule={handleCreateSchedule}
-        onPreviewSearchResult={(resItem, onSelectFromPreview) =>
+        onPreviewSearchResult={(resItem, onSelectFromPreview) => {
+          clearHoverTimers();
           setPreviewMediaState({
             searchResult: resItem,
+            triggerMode: 'click',
             onSelectSearchResult: onSelectFromPreview,
-          })
+          });
+        }}
+        onHoverPreviewSearchResult={(resItem, onSelectFromPreview) =>
+          handleHoverEnterSearchResult(resItem, onSelectFromPreview)
         }
+        onHoverLeaveSearchResult={handleHoverLeaveSource}
       />
 
       <MediaPreviewModal
         vaultItem={previewMediaState?.vaultItem || null}
         searchResult={previewMediaState?.searchResult || null}
-        onClose={() => setPreviewMediaState(null)}
+        triggerMode={previewMediaState?.triggerMode || 'click'}
+        anchorRect={previewMediaState?.anchorRect || null}
+        onHoverEnterModal={handleHoverEnterModal}
+        onHoverLeaveModal={handleHoverLeaveModal}
+        onPinModal={handlePinPreviewModal}
+        onClose={() => {
+          clearHoverTimers();
+          setPreviewMediaState(null);
+        }}
         onUpdateVaultItem={async (updated) => {
           await handleUpdateVault(updated);
           setPreviewMediaState((prev) =>
